@@ -1,0 +1,33 @@
+{
+  "name": "banking-platform-backend",
+  "version": "1.0.0",
+  "description": "Production-style multi-currency banking and financial management backend",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"Tests will be added later\""
+  },
+  "keywords": [
+    "banking",
+    "finance",
+    "backend",
+    "nodejs",
+    "typescript",
+    "postgresql",
+    "redis"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.3.0",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}
