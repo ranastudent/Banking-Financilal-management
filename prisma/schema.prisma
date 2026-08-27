@@ -5,3 +5,196 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+// ==========================================
+// USER ENUMS
+// ==========================================
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+  SUPPORT
+  AUDITOR
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  BLOCKED
+}
+
+// ==========================================
+// ACCOUNT ENUMS
+// ==========================================
+
+enum AccountType {
+  SAVINGS
+  CURRENT
+  FOREIGN_CURRENCY
+}
+
+enum AccountStatus {
+  ACTIVE
+  FROZEN
+  CLOSED
+}
+
+// ==========================================
+// Excange Rate ENUMS
+// ==========================================
+
+enum ExchangeRateStatus {
+  ACTIVE
+  INACTIVE
+  EXPIRED
+}
+
+// ==========================================
+// Create the User Model
+// ==========================================
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  name         String
+  email        String     @unique
+  phone        String?    @unique
+  passwordHash String     @map("password_hash")
+  role         UserRole   @default(CUSTOMER)
+  status       UserStatus @default(INACTIVE)
+
+  emailVerifiedAt DateTime? @map("email_verified_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  accounts Account[]
+
+  @@index([email])
+  @@index([phone])
+  @@index([role])
+  @@index([status])
+  @@map("users")
+}
+
+//==========================================
+// Create the Account Model
+//==========================================
+model Account {
+  id            String        @id @default(uuid()) @db.Uuid
+  userId        String        @map("user_id") @db.Uuid
+  accountNumber String        @unique @map("account_number")
+  accountType   AccountType   @default(SAVINGS) @map("account_type")
+  status        AccountStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  balances AccountBalance[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("accounts")
+}
+
+// ==========================================
+// Create the CURRENCY model
+// ==========================================
+
+model Currency {
+  code          String  @id @db.Char(3)
+  name          String
+  symbol        String?
+  decimalPlaces Int     @default(2) @map("decimal_places")
+  isActive      Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  accountBalances AccountBalance[]
+
+  reserve CurrencyReserve?
+
+  baseExchangeRates  ExchangeRate[] @relation("ExchangeRateBaseCurrency")
+  quoteExchangeRates ExchangeRate[] @relation("ExchangeRateQuoteCurrency")
+
+  @@index([isActive])
+  @@map("currencies")
+}
+
+// ==========================================
+// Create the AccountBalance model
+// ==========================================
+model AccountBalance {
+  id String @id @default(uuid()) @db.Uuid
+
+  accountId    String @map("account_id") @db.Uuid
+  currencyCode String @map("currency_code") @db.Char(3)
+
+  availableBalance Decimal @default(0) @map("available_balance") @db.Decimal(24, 8)
+  lockedBalance    Decimal @default(0) @map("locked_balance") @db.Decimal(24, 8)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  account  Account  @relation(fields: [accountId], references: [id])
+  currency Currency @relation(fields: [currencyCode], references: [code])
+
+  @@unique([accountId, currencyCode])
+  @@index([accountId])
+  @@index([currencyCode])
+  @@map("account_balances")
+}
+
+// ==========================================
+// Create the Currency Reserve model
+// ==========================================
+model CurrencyReserve {
+  id String @id @default(uuid()) @db.Uuid
+
+  currencyCode String @unique @map("currency_code") @db.Char(3)
+
+  availableReserve Decimal @default(0) @map("available_reserve") @db.Decimal(24, 8)
+  lockedReserve    Decimal @default(0) @map("locked_reserve") @db.Decimal(24, 8)
+  minimumReserve   Decimal @default(0) @map("minimum_reserve") @db.Decimal(24, 8)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  currency Currency @relation(fields: [currencyCode], references: [code])
+
+  @@index([currencyCode])
+  @@map("currency_reserves")
+}
+
+// ==========================================
+// Create the ExchangeRate model
+// ==========================================
+model ExchangeRate {
+  id            String @id @default(uuid()) @db.Uuid
+  baseCurrency  String @map("base_currency") @db.Char(3)
+  quoteCurrency String @map("quote_currency") @db.Char(3)
+
+  rate     Decimal  @db.Decimal(24, 10)
+  buyRate  Decimal? @map("buy_rate") @db.Decimal(24, 10)
+  sellRate Decimal? @map("sell_rate") @db.Decimal(24, 10)
+  spread   Decimal? @db.Decimal(24, 10)
+
+  source  String?
+  version Int
+
+  effectiveFrom DateTime  @map("effective_from")
+  effectiveTo   DateTime? @map("effective_to")
+
+  status    ExchangeRateStatus @default(ACTIVE)
+  createdAt DateTime           @default(now()) @map("created_at")
+
+  baseCurrencyRef  Currency @relation("ExchangeRateBaseCurrency", fields: [baseCurrency], references: [code])
+  quoteCurrencyRef Currency @relation("ExchangeRateQuoteCurrency", fields: [quoteCurrency], references: [code])
+
+  @@unique([baseCurrency, quoteCurrency, version])
+  @@index([baseCurrency, quoteCurrency, status])
+  @@index([effectiveFrom])
+  @@map("exchange_rates")
+}
