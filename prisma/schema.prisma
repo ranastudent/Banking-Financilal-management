@@ -51,6 +51,137 @@ enum ExchangeRateStatus {
 }
 
 // ==========================================
+// Transaction ENUMS
+// ==========================================
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  INTERNAL_TRANSFER
+  EXTERNAL_DEPOSIT
+  EXTERNAL_TRANSFER
+  FX_CONVERSION
+  REFUND
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+enum TransactionProvider {
+  INTERNAL
+  BKASH
+  NAGAD
+  ROCKET
+  PAYPAL
+  PAYONEER
+  WISE
+}
+
+enum TransactionEntryType {
+  DEBIT
+  CREDIT
+}
+
+// ==========================================
+// Create Foreign Currency Request ENUMS
+// ==========================================
+enum ForeignCurrencyRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  NEEDS_MORE_INFORMATION
+  EXPIRED
+  CANCELLED
+}
+
+//=========================================
+// Create the Approval Desision ENUMS
+//=========================================
+enum ApprovalDecision {
+  APPROVED
+  REJECTED
+  NEEDS_MORE_INFORMATION
+}
+
+//==========================================
+// create reserver moment Enum
+//==========================================
+enum ReserveMovementType {
+  CUSTOMER_FX_PURCHASE
+  CUSTOMER_FX_SELL
+  EXTERNAL_SETTLEMENT
+  ADMIN_ADJUSTMENT
+  OPENING_BALANCE
+}
+
+//==========================================
+// Benificiary ENUMS
+//==========================================
+enum BeneficiaryType {
+  INTERNAL
+  EXTERNAL
+}
+
+enum BeneficiaryStatus {
+  ACTIVE
+  INACTIVE
+  BLOCKED
+}
+
+enum PaymentProvider {
+  INTERNAL
+  BKASH
+  NAGAD
+  ROCKET
+  PAYPAL
+  PAYONEER
+  WISE
+}
+
+// ==========================================
+// External Provider Transaction ENUMS
+//=========================================
+enum ExternalProviderTransactionStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+//=========================================
+// Create Notification ENUMS
+//=========================================
+enum NotificationType {
+  REGISTRATION_OTP
+  EMAIL_VERIFICATION
+  TRANSACTION
+  FX_REQUEST
+  FX_APPROVAL
+  SECURITY
+  SYSTEM
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  IN_APP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  READ
+}
+
+// ==========================================
 // Create the User Model
 // ==========================================
 model User {
@@ -67,10 +198,15 @@ model User {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  accounts Account[]
+  accounts                Account[]
+  approvalRecords         ApprovalRecord[]         @relation("ApprovalReviewer")
+  foreignCurrencyRequests ForeignCurrencyRequest[]
+  reviewedFXRequests      ForeignCurrencyRequest[] @relation("FXRequestReviewer")
+  beneficiaries           Beneficiary[]
+  notifications           Notification[]
+  auditLogs               AuditLog[]               @relation("UserAuditLogs")
+  idempotencyRecords      IdempotencyRecord[]      @relation("UserIdempotencyRecords")
 
-  @@index([email])
-  @@index([phone])
   @@index([role])
   @@index([status])
   @@map("users")
@@ -92,6 +228,13 @@ model Account {
   user User @relation(fields: [userId], references: [id])
 
   balances AccountBalance[]
+
+  sourceTransactions      Transaction[] @relation("TransactionSourceAccount")
+  destinationTransactions Transaction[] @relation("TransactionDestinationAccount")
+
+  transactionLegs         TransactionLeg[]
+  ledgerEntries           LedgerEntry[]
+  foreignCurrencyRequests ForeignCurrencyRequest[]
 
   @@index([userId])
   @@index([status])
@@ -119,6 +262,14 @@ model Currency {
   baseExchangeRates  ExchangeRate[] @relation("ExchangeRateBaseCurrency")
   quoteExchangeRates ExchangeRate[] @relation("ExchangeRateQuoteCurrency")
 
+  transactions                 Transaction[]
+  transactionLegs              TransactionLeg[]
+  ledgerEntries                LedgerEntry[]
+  foreignCurrencyRequests      ForeignCurrencyRequest[]
+  reserveMovements             ReserveMovement[]
+  beneficiaries                Beneficiary[]
+  externalProviderTransactions ExternalProviderTransaction[]
+
   @@index([isActive])
   @@map("currencies")
 }
@@ -142,7 +293,6 @@ model AccountBalance {
   currency Currency @relation(fields: [currencyCode], references: [code])
 
   @@unique([accountId, currencyCode])
-  @@index([accountId])
   @@index([currencyCode])
   @@map("account_balances")
 }
@@ -162,9 +312,9 @@ model CurrencyReserve {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  currency Currency @relation(fields: [currencyCode], references: [code])
+  currency         Currency          @relation(fields: [currencyCode], references: [code])
+  reserveMovements ReserveMovement[]
 
-  @@index([currencyCode])
   @@map("currency_reserves")
 }
 
@@ -197,4 +347,333 @@ model ExchangeRate {
   @@index([baseCurrency, quoteCurrency, status])
   @@index([effectiveFrom])
   @@map("exchange_rates")
+}
+
+// ==========================================
+// Create the Transaction model
+// ==========================================
+
+model Transaction {
+  id           String            @id @default(uuid()) @db.Uuid
+  reference    String            @unique
+  type         TransactionType
+  status       TransactionStatus @default(PENDING)
+  amount       Decimal           @db.Decimal(24, 8)
+  currencyCode String            @map("currency_code") @db.Char(3)
+
+  sourceAccountId      String? @map("source_account_id") @db.Uuid
+  destinationAccountId String? @map("destination_account_id") @db.Uuid
+
+  provider              TransactionProvider @default(INTERNAL)
+  providerTransactionId String?             @map("provider_transaction_id")
+
+  idempotencyKey String? @map("idempotency_key")
+  failureCode    String? @map("failure_code")
+  failureReason  String? @map("failure_reason")
+  metadata       Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  currency Currency @relation(fields: [currencyCode], references: [code])
+
+  sourceAccount Account? @relation("TransactionSourceAccount", fields: [sourceAccountId], references: [id])
+
+  destinationAccount          Account?                     @relation("TransactionDestinationAccount", fields: [destinationAccountId], references: [id])
+  externalProviderTransaction ExternalProviderTransaction?
+
+  legs             TransactionLeg[]
+  ledgerEntries    LedgerEntry[]
+  reserveMovements ReserveMovement[]
+
+  @@index([status, createdAt])
+  @@index([sourceAccountId, createdAt])
+  @@index([destinationAccountId, createdAt])
+  @@index([provider, providerTransactionId])
+  @@index([currencyCode, createdAt])
+  @@index([idempotencyKey])
+  @@map("transactions")
+}
+
+// ==========================================
+// Create the TransactionLeg model
+// ==========================================
+
+model TransactionLeg {
+  id            String @id @default(uuid()) @db.Uuid
+  transactionId String @map("transaction_id") @db.Uuid
+  accountId     String @map("account_id") @db.Uuid
+  currencyCode  String @map("currency_code") @db.Char(3)
+
+  entryType TransactionEntryType
+  amount    Decimal              @db.Decimal(24, 8)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+
+  account Account @relation(fields: [accountId], references: [id])
+
+  currency Currency @relation(fields: [currencyCode], references: [code])
+
+  @@index([transactionId])
+  @@index([accountId, currencyCode])
+  @@index([currencyCode, createdAt])
+  @@map("transaction_legs")
+}
+
+// ==========================================
+// Create the LedgerEntry model
+// ==========================================
+
+model LedgerEntry {
+  id            String @id @default(uuid()) @db.Uuid
+  transactionId String @map("transaction_id") @db.Uuid
+  accountId     String @map("account_id") @db.Uuid
+  currencyCode  String @map("currency_code") @db.Char(3)
+
+  entryType TransactionEntryType
+  amount    Decimal              @db.Decimal(24, 8)
+
+  balanceBefore Decimal @map("balance_before") @db.Decimal(24, 8)
+  balanceAfter  Decimal @map("balance_after") @db.Decimal(24, 8)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+
+  account Account @relation(fields: [accountId], references: [id])
+
+  currency Currency @relation(fields: [currencyCode], references: [code])
+
+  @@index([transactionId])
+  @@index([accountId, currencyCode, createdAt])
+  @@index([currencyCode, createdAt])
+  @@map("ledger_entries")
+}
+
+// ==========================================
+// Create the ForeignCurrencyRequest model
+// ==========================================
+
+model ForeignCurrencyRequest {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId    String @map("user_id") @db.Uuid
+  accountId String @map("account_id") @db.Uuid
+
+  requestedCurrency String  @map("requested_currency") @db.Char(3)
+  requestedAmount   Decimal @map("requested_amount") @db.Decimal(24, 8)
+
+  purposeCategory     String  @map("purpose_category")
+  purposeDescription  String  @map("purpose_description")
+  supportingReference String? @map("supporting_reference")
+
+  status ForeignCurrencyRequestStatus @default(PENDING)
+
+  reviewedBy  String?   @map("reviewed_by") @db.Uuid
+  reviewedAt  DateTime? @map("reviewed_at")
+  reviewNotes String?   @map("review_notes")
+
+  expiresAt DateTime? @map("expires_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user    User    @relation(fields: [userId], references: [id])
+  account Account @relation(fields: [accountId], references: [id])
+
+  requestedCurrencyRef Currency @relation(fields: [requestedCurrency], references: [code])
+
+  reviewer User? @relation("FXRequestReviewer", fields: [reviewedBy], references: [id])
+
+  approvalRecords ApprovalRecord[]
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([requestedCurrency, status])
+  @@index([accountId])
+  @@map("foreign_currency_requests")
+}
+
+// ==========================================
+// Create the ApprovalRecord model
+// ==========================================
+
+model ApprovalRecord {
+  id String @id @default(uuid()) @db.Uuid
+
+  requestId  String @map("request_id") @db.Uuid
+  reviewerId String @map("reviewer_id") @db.Uuid
+
+  decision ApprovalDecision
+  comment  String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  request ForeignCurrencyRequest @relation(fields: [requestId], references: [id])
+
+  reviewer User @relation("ApprovalReviewer", fields: [reviewerId], references: [id])
+
+  @@index([requestId, createdAt])
+  @@index([reviewerId, createdAt])
+  @@map("approval_records")
+}
+
+// ==========================================
+// Create the ReserveMovement model
+// ==========================================
+
+model ReserveMovement {
+  id String @id @default(uuid()) @db.Uuid
+
+  reserveId     String  @map("reserve_id") @db.Uuid
+  transactionId String? @map("transaction_id") @db.Uuid
+  currencyCode  String  @map("currency_code") @db.Char(3)
+
+  movementType ReserveMovementType
+  amount       Decimal             @db.Decimal(24, 8)
+
+  balanceBefore Decimal @map("balance_before") @db.Decimal(24, 8)
+  balanceAfter  Decimal @map("balance_after") @db.Decimal(24, 8)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  reserve CurrencyReserve @relation(fields: [reserveId], references: [id])
+
+  transaction Transaction? @relation(fields: [transactionId], references: [id])
+
+  currency Currency @relation(fields: [currencyCode], references: [code])
+
+  @@index([currencyCode, createdAt])
+  @@index([reserveId, createdAt])
+  @@index([transactionId])
+  @@map("reserve_movements")
+}
+
+// ==========================================
+// Create the Beneficiary model
+// ==========================================
+model Beneficiary {
+  id               String            @id @default(uuid()) @db.Uuid
+  userId           String            @map("user_id") @db.Uuid
+  beneficiaryType  BeneficiaryType   @map("beneficiary_type")
+  displayName      String            @map("display_name")
+  accountReference String            @map("account_reference")
+  provider         PaymentProvider?
+  currencyCode     String            @map("currency_code") @db.Char(3)
+  status           BeneficiaryStatus @default(ACTIVE)
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+
+  user     User     @relation(fields: [userId], references: [id])
+  currency Currency @relation(fields: [currencyCode], references: [code])
+
+  @@index([currencyCode])
+  @@index([userId, status])
+  @@map("beneficiaries")
+}
+
+model ExternalProviderTransaction {
+  id                    String                            @id @default(uuid()) @db.Uuid
+  transactionId         String                            @unique @map("transaction_id") @db.Uuid
+  provider              PaymentProvider
+  providerTransactionId String                            @map("provider_transaction_id")
+  externalReference     String?                           @map("external_reference")
+  currencyCode          String                            @map("currency_code") @db.Char(3)
+  amount                Decimal                           @db.Decimal(24, 8)
+  status                ExternalProviderTransactionStatus
+  requestPayloadHash    String?                           @map("request_payload_hash")
+  responseMetadata      Json?                             @map("response_metadata")
+  createdAt             DateTime                          @default(now()) @map("created_at")
+  updatedAt             DateTime                          @updatedAt @map("updated_at")
+
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+  currency    Currency    @relation(fields: [currencyCode], references: [code])
+
+  @@unique([provider, providerTransactionId])
+  @@index([provider, status])
+  @@index([currencyCode, createdAt])
+  @@index([externalReference])
+  @@map("external_provider_transactions")
+}
+
+//==========================================
+// Create the Notification model
+//==========================================
+model Notification {
+  id        String              @id @default(uuid()) @db.Uuid
+  userId    String              @map("user_id") @db.Uuid
+  type      NotificationType
+  title     String
+  message   String
+  channel   NotificationChannel
+  status    NotificationStatus  @default(PENDING)
+  metadata  Json?
+  createdAt DateTime            @default(now()) @map("created_at")
+  readAt    DateTime?           @map("read_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([userId, status])
+  @@index([type, createdAt])
+  @@map("notifications")
+}
+
+// ==========================================
+// Create Audit Log model
+// ==========================================
+
+model AuditLog {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId String? @map("user_id") @db.Uuid
+
+  action     String
+  entityType String  @map("entity_type")
+  entityId   String? @map("entity_id")
+
+  description String?
+
+  ipAddress String? @map("ip_address")
+  userAgent String? @map("user_agent")
+
+  metadata Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User? @relation("UserAuditLogs", fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ==========================================
+// Create Idempotency Record Model
+// ==========================================
+
+model IdempotencyRecord {
+  id String @id @default(uuid()) @db.Uuid
+
+  key    String
+  userId String? @map("user_id") @db.Uuid
+
+  requestHash String @map("request_hash")
+
+  responseStatus Int?  @map("response_status")
+  responseBody   Json? @map("response_body")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  expiresAt DateTime @map("expires_at")
+
+  user User? @relation("UserIdempotencyRecords", fields: [userId], references: [id])
+
+  @@unique([key, userId])
+  @@index([expiresAt])
+  @@index([userId, createdAt])
+  @@map("idempotency_records")
 }

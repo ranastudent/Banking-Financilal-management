@@ -5,6 +5,8 @@ const requiredEnv = [
   "REDIS_URL",
   "JWT_ACCESS_SECRET",
   "JWT_REFRESH_SECRET",
+  "DEFAULT_ADMIN_EMAIL",
+  "DEFAULT_ADMIN_PASSWORD",
 ] as const;
 
 for (const key of requiredEnv) {
@@ -23,4 +25,8 @@ export const env = {
   jwtAccessSecret: process.env.JWT_ACCESS_SECRET!,
 
   jwtRefreshSecret: process.env.JWT_REFRESH_SECRET!,
+
+  defaultAdminEmail: process.env.DEFAULT_ADMIN_EMAIL!,
+
+  defaultAdminPassword: process.env.DEFAULT_ADMIN_PASSWORD!,
 };
