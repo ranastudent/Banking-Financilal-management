@@ -1,19 +1,22 @@
 import express from "express";
 import { prisma } from "./config/prisma";
 import { redis } from "./config/redis";
+import { requestIdMiddleware } from "./middleware/requestId";
+import { errorHandler } from "./middleware/errorHandler";
+import { AppError } from "./errors/AppError";
+import { ErrorCode } from "./errors/errorCodes";
+import { requestLogger } from "./middleware/requestLogger";
+import validationTestRouter from "./routes/validationTest";
 
 const app = express();
 
+app.use(requestIdMiddleware);
+app.use(requestLogger);
 app.use(express.json());
+app.use("/test-validation", validationTestRouter);
 
-/*app.get("/api/v1/health", (_req, res) => {
-  res.status(200).json({
-    success: true,
-    message: "Banking Platform API is running",
-  });
-});*/
-
-app.get("/health", async (_req, res) => {
+app.get("/health", async (req, res) => {
+  
   let database = "disconnected";
   let redisStatus = "disconnected";
 
@@ -42,6 +45,7 @@ app.get("/health", async (_req, res) => {
     status: healthy ? "ok" : "degraded",
     database,
     redis: redisStatus,
+    requestId: req.requestId,
   });
 });
 
@@ -59,6 +63,26 @@ app.get("/ready", async (_req, res) => {
     });
   }
 });
+
+app.get("/test-error", (_req, _res) => {
+  throw new Error("This is a test internal error");
+});
+
+app.get("/test-app-error", (_req, _res) => {
+  throw new AppError(
+    "Account not found",
+    404,
+    ErrorCode.RESOURCE_NOT_FOUND,
+  );
+});
+
+/*
+ * Global error handler
+ *
+ * IMPORTANT:
+ * This must be registered after routes.
+ */
+app.use(errorHandler);
 
 
 
