@@ -7,10 +7,12 @@ import { AppError } from "./errors/AppError";
 import { ErrorCode } from "./errors/errorCodes";
 import { requestLogger } from "./middleware/requestLogger";
 import validationTestRouter from "./routes/validationTest";
+import helmet from "helmet";
 
 
 const app = express();
 
+app.use(helmet());
 app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(express.json());
