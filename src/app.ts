@@ -8,6 +8,7 @@ import { ErrorCode } from "./errors/errorCodes";
 import { requestLogger } from "./middleware/requestLogger";
 import validationTestRouter from "./routes/validationTest";
 
+
 const app = express();
 
 app.use(requestIdMiddleware);
@@ -75,6 +76,18 @@ app.get("/test-app-error", (_req, _res) => {
     ErrorCode.RESOURCE_NOT_FOUND,
   );
 });
+
+app.use((req, _res, next) => {
+  next(
+    new AppError(
+      "Resource not found",
+      404,
+      ErrorCode.NOT_FOUND,
+    ),
+  );
+});
+
+
 
 /*
  * Global error handler

@@ -14,11 +14,11 @@ export const validate = (schemas: ValidationSchemas) => {
     }
 
     if (schemas.query) {
-       schemas.query.parse(req.query);
+       req.validatedQuery = schemas.query.parse(req.query);
     }
 
     if (schemas.params) {
-       schemas.params.parse(req.params);
+       req.validatedParams = schemas.params.parse(req.params);
     }
 
     next();

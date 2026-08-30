@@ -1,45 +1,51 @@
 import { Router } from "express";
-import { z } from "zod";
+
 import { validate } from "../middleware/validate";
+import {accountNumberSchema,testValidationSchema, beneficiarySchema, paginationSchema,} from "../schemas/validation";
+import { z } from "zod";
+import { sendSuccess } from "../utils/apiResponse";
 
 const router = Router();
-
-const testSchema = z
-  .object({
-    email: z.string().trim().email(),
-    amount: z
-      .string()
-      .trim()
-      .regex(/^\d+(\.\d{1,2})?$/)
-      .refine((value) => Number(value) > 0, {
-        message: "Amount must be greater than zero",
-      }),
-    currency: z
-      .string()
-      .trim()
-      .length(3)
-      .regex(/^[A-Z]{3}$/),
-    accountNumber: z
-      .string()
-      .trim()
-      .min(5)
-      .max(34)
-      .regex(/^[A-Za-z0-9]+$/),
-  })
-  .strict();
 
 router.post(
   "/body",
   validate({
-    body: testSchema,
+    body: testValidationSchema,
   }),
   (req, res) => {
-    res.status(200).json({
-      success: true,
-      message: "Validation passed",
-      data: req.body,
-      requestId: req.requestId,
-    });
+    sendSuccess(res, req.requestId, req.body);
+  },
+);
+
+router.post(
+  "/beneficiary",
+  validate({
+    body: beneficiarySchema,
+  }),
+  (req, res) => {
+    sendSuccess(res, req.requestId, req.body);
+  },
+);
+
+router.get(
+  "/pagination",
+  validate({
+    query: paginationSchema,
+  }),
+  (req, res) => {
+    sendSuccess(res, req.requestId, req.validatedQuery);
+  },
+);
+
+router.get(
+  "/params/:accountNumber",
+  validate({
+    params: z.object({
+      accountNumber: accountNumberSchema,
+    }),
+  }),
+  (req, res) => {
+    sendSuccess(res, req.requestId, req.params);
   },
 );
 
