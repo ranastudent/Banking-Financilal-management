@@ -4,6 +4,7 @@ import { validate } from "../middleware/validate";
 import {accountNumberSchema,testValidationSchema, beneficiarySchema, paginationSchema,} from "../schemas/validation";
 import { z } from "zod";
 import { sendSuccess } from "../utils/apiResponse";
+import { authRateLimiter } from "../middleware/rateLimit";
 
 const router = Router();
 
@@ -46,6 +47,20 @@ router.get(
   }),
   (req, res) => {
     sendSuccess(res, req.requestId, req.params);
+  },
+);
+
+router.post(
+  "/auth-rate-limit",
+  authRateLimiter,
+  (_req, res) => {
+    res.status(200).json({
+      success: true,
+      data: {
+        message: "Authentication rate limit test passed",
+      },
+      requestId: _req.requestId,
+    });
   },
 );
 

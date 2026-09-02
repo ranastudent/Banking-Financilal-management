@@ -8,12 +8,16 @@ import { ErrorCode } from "./errors/errorCodes";
 import { requestLogger } from "./middleware/requestLogger";
 import validationTestRouter from "./routes/validationTest";
 import helmet from "helmet";
+import { corsMiddleware } from "./config/cors";
+import { generalRateLimiter } from "./middleware/rateLimit";
 
 
 const app = express();
 
 app.use(helmet());
+app.use(corsMiddleware);
 app.use(requestIdMiddleware);
+app.use(generalRateLimiter);
 app.use(requestLogger);
 app.use(express.json());
 app.use("/test-validation", validationTestRouter);
