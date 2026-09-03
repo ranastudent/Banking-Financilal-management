@@ -11,6 +11,24 @@ export const errorHandler = (
 ) => {
   const requestId = req.requestId;
 
+  // Request body too large
+  if (
+    error &&
+    typeof error === "object" &&
+    "type" in error &&
+    error.type === "entity.too.large"
+  ) {
+    return res.status(413).json({
+      success: false,
+      error: {
+        code: "PAYLOAD_TOO_LARGE",
+        message: "Request body is too large",
+      },
+      requestId,
+    });
+  }
+
+
   if (error instanceof ZodError) {
   return res.status(400).json({
     success: false,
