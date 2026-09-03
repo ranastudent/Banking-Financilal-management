@@ -4,7 +4,7 @@ import { validate } from "../middleware/validate";
 import {accountNumberSchema,testValidationSchema, beneficiarySchema, paginationSchema,} from "../schemas/validation";
 import { z } from "zod";
 import { sendSuccess } from "../utils/apiResponse";
-import { authRateLimiter } from "../middleware/rateLimit";
+import { authRateLimiter, otpRateLimiter, } from "../middleware/rateLimiter";
 
 const router = Router();
 
@@ -60,6 +60,20 @@ router.post(
         message: "Authentication rate limit test passed",
       },
       requestId: _req.requestId,
+    });
+  },
+);
+
+router.post(
+  "/otp-rate-limit",
+  otpRateLimiter,
+  (req, res) => {
+    res.status(200).json({
+      success: true,
+      data: {
+        message: "OTP rate limit test passed",
+      },
+      requestId: req.requestId,
     });
   },
 );

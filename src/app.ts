@@ -9,7 +9,8 @@ import { requestLogger } from "./middleware/requestLogger";
 import validationTestRouter from "./routes/validationTest";
 import helmet from "helmet";
 import { corsMiddleware } from "./config/cors";
-import { generalRateLimiter } from "./middleware/rateLimit";
+import { generalRateLimiter } from "./middleware/rateLimiter";
+import { env } from "./config/env";
 
 
 const app = express();
@@ -19,7 +20,7 @@ app.use(corsMiddleware);
 app.use(requestIdMiddleware);
 app.use(generalRateLimiter);
 app.use(requestLogger);
-app.use(express.json());
+app.use(express.json({limit: env.bodySizeLimit}));
 app.use("/test-validation", validationTestRouter);
 
 app.get("/health", async (req, res) => {
