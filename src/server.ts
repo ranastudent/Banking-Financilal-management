@@ -2,6 +2,7 @@ import app from "./app";
 import { env } from "./config/env";
 import { prisma } from "./config/prisma";
 import { redis } from "./config/redis";
+import { shutdown } from "./utils/shutdown";
 
 async function startServer() {
   try {
@@ -24,50 +25,20 @@ async function startServer() {
       console.log(`Server running on port ${env.port}`);
     });
 
-    // --------------------------------
-    // Graceful shutdown
-    // --------------------------------
-    let isShuttingDown = false;
-
-    const shutdown = async (signal: string) => {
-      if (isShuttingDown) {
-        return;
-      }
-
-      isShuttingDown = true;
-
-      console.log(`${signal} received. Shutting down...`);
-
-      server.close(async () => {
-        try {
-          await prisma.$disconnect();
-          console.log("PostgreSQL disconnected");
-
-          if (redis.isOpen) {
-            await redis.quit();
-            console.log("Redis disconnected");
-          }
-
-          console.log("Server shut down successfully");
-
-          process.exit(0);
-        } catch (error) {
-          console.error("Error during shutdown:", error);
-
-          process.exit(1);
-        }
-      });
-    };
 
     // --------------------------------
     // Process signals
     // --------------------------------
     process.on("SIGTERM", () => {
-      void shutdown("SIGTERM");
+      void shutdown(server, "SIGTERM")
+        .then(() => process.exit(0))
+        .catch(() => process.exit(1));
     });
 
     process.on("SIGINT", () => {
-      void shutdown("SIGINT");
+      void shutdown(server, "SIGINT")
+        .then(() => process.exit(0))
+        .catch(() => process.exit(1));
     });
   } catch (error) {
     console.error("Failed to start server:", error);
