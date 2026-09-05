@@ -1,5 +1,9 @@
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it,vi } from "vitest";
+
+vi.mock("../auth/services/otp.service", () => ({
+  sendRegistrationOtp: vi.fn(),
+}));
 
 import app from "../app";
 import { prisma } from "../config/prisma";

@@ -1,14 +1,12 @@
 import { prisma } from "../../config/prisma";
-
 import { generateOtp } from "../utils/otp";
 import { hashOtp } from "../utils/otpHash";
-
 import { sendRegistrationOtpEmail } from "./email.service";
 
 export const sendRegistrationOtp = async (
   userId: string,
   email: string,
-) => {
+): Promise<void> => {
   // 1. Generate a 6-digit OTP
   const otp = generateOtp();
 
@@ -18,7 +16,7 @@ export const sendRegistrationOtp = async (
   // 3. OTP expires after 10 minutes
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-  // 4. Store only the hashed OTP in the database
+  // 4. Store only the hashed OTP
   await prisma.emailVerificationOtp.create({
     data: {
       userId,

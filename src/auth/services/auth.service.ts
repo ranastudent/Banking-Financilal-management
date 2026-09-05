@@ -3,6 +3,7 @@ import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
 import type { RegisterInput } from "../schemas/auth.schema";
 import { hashPassword } from "../utils/password";
+import { sendRegistrationOtp } from "./otp.service";
 
 export const registerUser = async (input: RegisterInput) => {
   const email = input.email.trim().toLowerCase();
@@ -46,6 +47,8 @@ export const registerUser = async (input: RegisterInput) => {
       createdAt: true,
     },
   });
+
+  await sendRegistrationOtp(user.id, user.email);
 
   return user;
 };
