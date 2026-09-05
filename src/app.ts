@@ -11,6 +11,7 @@ import helmet from "helmet";
 import { corsMiddleware } from "./config/cors";
 import { generalRateLimiter } from "./middleware/rateLimiter";
 import { env } from "./config/env";
+import routes from "./routes";
 
 
 const app = express();
@@ -18,9 +19,11 @@ const app = express();
 app.use(helmet());
 app.use(corsMiddleware);
 app.use(requestIdMiddleware);
-app.use(generalRateLimiter);
 app.use(requestLogger);
-app.use(express.json({limit: env.bodySizeLimit}));
+app.use(express.json({ limit: env.bodySizeLimit }));
+app.use(generalRateLimiter);
+
+app.use("/api/v1", routes);
 app.use("/test-validation", validationTestRouter);
 
 app.get("/health", async (req, res) => {

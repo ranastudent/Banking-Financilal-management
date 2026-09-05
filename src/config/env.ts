@@ -8,6 +8,11 @@ const requiredEnv = [
   "DEFAULT_ADMIN_EMAIL",
   "DEFAULT_ADMIN_PASSWORD",
   "CORS_ORIGINS",
+  "SMTP_HOST",
+  "SMTP_PORT",
+  "SMTP_USER",
+  "SMTP_PASSWORD",
+  "EMAIL_FROM",
 ] as const;
 
 for (const key of requiredEnv) {
@@ -56,6 +61,19 @@ export const env = {
     .map((origin) => origin.trim())
     .filter(Boolean),
 
+  email: {
+  smtpHost: process.env.SMTP_HOST!,
+  smtpPort: parsePositiveNumber(
+  process.env.SMTP_PORT,
+  587,
+  "SMTP_PORT",
+  ),
+  smtpUser: process.env.SMTP_USER!,
+  smtpPassword: process.env.SMTP_PASSWORD!,
+  from: process.env.EMAIL_FROM!,
+  fromName: process.env.EMAIL_FROM_NAME || "Banking Platform",
+  },
+
   bodySizeLimit: process.env.BODY_SIZE_LIMIT || "1mb",
 
   rateLimit: {
@@ -82,5 +100,7 @@ export const env = {
       max:
         Number(process.env.OTP_RATE_LIMIT_MAX) || 5,
     },
+
   },
+
 };

@@ -206,6 +206,7 @@ model User {
   notifications           Notification[]
   auditLogs               AuditLog[]               @relation("UserAuditLogs")
   idempotencyRecords      IdempotencyRecord[]      @relation("UserIdempotencyRecords")
+  emailVerificationOtps EmailVerificationOtp[]
 
   @@index([role])
   @@index([status])
@@ -676,4 +677,23 @@ model IdempotencyRecord {
   @@index([expiresAt])
   @@index([userId, createdAt])
   @@map("idempotency_records")
+}
+
+model EmailVerificationOtp {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+
+  otpHash   String   @map("otp_hash")
+  expiresAt DateTime @map("expires_at")
+
+  attempts  Int      @default(0)
+  verifiedAt DateTime? @map("verified_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("email_verification_otps")
 }
