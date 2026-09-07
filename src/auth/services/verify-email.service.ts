@@ -1,8 +1,10 @@
 import { prisma } from "../../config/prisma";
 import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
-import { compareOtp } from "../utils/otpHash";
 import type { VerifyEmailInput } from "../schemas/verifyEmail.schema";
+import { compareOtp } from "../utils/otpHash";
+
+const MAX_OTP_ATTEMPTS = 5;
 
 export const verifyEmail = async (input: VerifyEmailInput) => {
   const email = input.email.trim().toLowerCase();
@@ -60,12 +62,43 @@ export const verifyEmail = async (input: VerifyEmailInput) => {
     );
   }
 
+  if (otpRecord.attempts >= MAX_OTP_ATTEMPTS) {
+    throw new AppError(
+      "Verification OTP has been locked due to too many failed attempts",
+      400,
+      ErrorCode.BAD_REQUEST,
+    );
+  }
+
   const isValidOtp = await compareOtp(
     input.otp,
     otpRecord.otpHash,
   );
 
   if (!isValidOtp) {
+    const updatedOtp = await prisma.emailVerificationOtp.updateMany({
+      where: {
+        id: otpRecord.id,
+        verifiedAt: null,
+        attempts: {
+          lt: MAX_OTP_ATTEMPTS,
+        },
+      },
+      data: {
+        attempts: {
+          increment: 1,
+        },
+      },
+    });
+
+    if (updatedOtp.count === 0) {
+      throw new AppError(
+        "Verification OTP has been locked due to too many failed attempts",
+        400,
+        ErrorCode.BAD_REQUEST,
+      );
+    }
+
     throw new AppError(
       "Invalid verification OTP",
       400,

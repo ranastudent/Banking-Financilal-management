@@ -152,4 +152,97 @@ describe("OTP Verification Security", () => {
     expect(oldOtpAfter?.verifiedAt).toBeNull();
     expect(newOtpAfter?.verifiedAt).not.toBeNull();
   });
+
+    it("should increment failed OTP attempts", async () => {
+    const email = `security-otp-${Date.now()}@example.com`;
+    const otp = "123456";
+
+    const user = await createTestUser(email);
+
+    const otpHash = await hashOtp(otp);
+
+    const otpRecord = await prisma.emailVerificationOtp.create({
+      data: {
+        userId: user.id,
+        otpHash,
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    });
+
+    await expect(
+      verifyEmail({
+        email,
+        otp: "654321",
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      code: "BAD_REQUEST",
+    });
+
+    const updatedOtp = await prisma.emailVerificationOtp.findUnique({
+      where: {
+        id: otpRecord.id,
+      },
+      select: {
+        attempts: true,
+        verifiedAt: true,
+      },
+    });
+
+    expect(updatedOtp?.attempts).toBe(1);
+    expect(updatedOtp?.verifiedAt).toBeNull();
+  });
+
+  it("should lock the OTP after 5 failed attempts", async () => {
+    const email = `security-otp-${Date.now()}@example.com`;
+    const correctOtp = "123456";
+    const wrongOtp = "654321";
+
+    const user = await createTestUser(email);
+
+    const otpHash = await hashOtp(correctOtp);
+
+    const otpRecord = await prisma.emailVerificationOtp.create({
+      data: {
+        userId: user.id,
+        otpHash,
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    });
+
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      await expect(
+        verifyEmail({
+          email,
+          otp: wrongOtp,
+        }),
+      ).rejects.toMatchObject({
+        statusCode: 400,
+        code: "BAD_REQUEST",
+      });
+    }
+
+    const lockedOtp = await prisma.emailVerificationOtp.findUnique({
+      where: {
+        id: otpRecord.id,
+      },
+      select: {
+        attempts: true,
+        verifiedAt: true,
+      },
+    });
+
+    expect(lockedOtp?.attempts).toBe(5);
+    expect(lockedOtp?.verifiedAt).toBeNull();
+
+    await expect(
+      verifyEmail({
+        email,
+        otp: correctOtp,
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      code: "BAD_REQUEST",
+    });
+  });
 });
