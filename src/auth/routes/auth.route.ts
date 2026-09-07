@@ -4,11 +4,13 @@ import { register } from "../controllers/auth.controller";
 import { login } from "../controllers/login.controller";
 import { verifyEmailController } from "../controllers/verify-email.controller";
 import { refreshToken } from "../controllers/refresh-token.controller";
+import { logout } from "../controllers/logout.controller";
 
 import {
   loginSchema,
   registerSchema,
 } from "../schemas/auth.schema";
+
 import { verifyEmailSchema } from "../schemas/verifyEmail.schema";
 import { refreshTokenSchema } from "../schemas/refresh-token.schema";
 
@@ -38,6 +40,12 @@ router.post(
   "/refresh",
   validate({ body: refreshTokenSchema }),
   refreshToken,
+);
+
+router.post(
+  "/logout",
+  validate({ body: refreshTokenSchema }),
+  logout,
 );
 
 export default router;
