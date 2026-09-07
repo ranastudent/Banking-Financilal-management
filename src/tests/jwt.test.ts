@@ -16,21 +16,21 @@ describe("JWT Utility", () => {
     status: "ACTIVE",
   };
 
-  it("should generate a valid access token", () => {
-    const token = generateAccessToken(user);
+  it("should generate a valid refresh token", () => {
+    const token = generateRefreshToken(user);
 
     expect(token).toBeTypeOf("string");
     expect(token.length).toBeGreaterThan(0);
 
     const decoded = jwt.verify(
       token,
-      env.jwtAccessSecret,
+      env.jwtRefreshSecret,
     ) as jwt.JwtPayload;
 
     expect(decoded.sub).toBe(user.id);
-    expect(decoded.email).toBe(user.email);
-    expect(decoded.role).toBe(user.role);
-    expect(decoded.status).toBe(user.status);
+    expect(decoded.tokenType).toBe("refresh");
+    expect(decoded.jti).toBeDefined();
+    expect(decoded.jti).toBeTypeOf("string");
     expect(decoded.exp).toBeDefined();
   });
 

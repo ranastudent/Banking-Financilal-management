@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import { randomUUID } from "crypto";
 
 import { env } from "../../config/env";
 import type { AuthUser } from "../../types/auth";
@@ -26,6 +27,7 @@ export const generateRefreshToken = (user: AuthUser): string => {
     {
       sub: user.id,
       tokenType: "refresh",
+      jti: randomUUID(),
     },
     env.jwtRefreshSecret,
     {
