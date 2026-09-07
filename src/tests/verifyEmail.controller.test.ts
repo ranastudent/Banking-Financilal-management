@@ -11,9 +11,9 @@ import { verifyEmail } from "../auth/services/verify-email.service";
 describe("Verify Email Controller", () => {
   it("should verify email successfully", async () => {
     vi.mocked(verifyEmail).mockResolvedValue({
-      id: "test-user-id",
-      name: "Test User",
-      email: "controller@example.com",
+      id: "11111111-1111-1111-1111-111111111111",
+      name: "Verify Controller User",
+      email: "verify-controller@example.com",
       phone: null,
       role: "CUSTOMER",
       status: "ACTIVE",
@@ -24,10 +24,30 @@ describe("Verify Email Controller", () => {
     const response = await request(app)
       .post("/api/v1/auth/verify-email")
       .send({
-        email: "controller@example.com",
+        email: "verify-controller@example.com",
         otp: "123456",
       });
 
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.data).toMatchObject({
+      id: "11111111-1111-1111-1111-111111111111",
+      name: "Verify Controller User",
+      email: "verify-controller@example.com",
+      phone: null,
+      role: "CUSTOMER",
+      status: "ACTIVE",
+    });
+
+    expect(response.body.data.emailVerifiedAt).not.toBeNull();
+    expect(response.body.requestId).toBeDefined();
+
+    expect(verifyEmail).toHaveBeenCalledTimes(1);
+
+    expect(verifyEmail).toHaveBeenCalledWith({
+      email: "verify-controller@example.com",
+      otp: "123456",
+    });
   });
 });

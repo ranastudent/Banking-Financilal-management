@@ -28,10 +28,27 @@ describe("Login Controller", () => {
         password: "StrongPassword123!",
       });
 
-    /*
-     * The route does not exist yet.
-     * Therefore this test should NOT be run until 7.10.4.
-     */
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.data).toEqual({
+      user: {
+        id: "11111111-1111-1111-1111-111111111111",
+        email: "login-controller@example.com",
+        role: "CUSTOMER",
+        status: "ACTIVE",
+      },
+      accessToken: "mock-access-token",
+      refreshToken: "mock-refresh-token",
+    });
+
+    expect(response.body.requestId).toBeDefined();
+
+    expect(loginUser).toHaveBeenCalledTimes(1);
+
+    expect(loginUser).toHaveBeenCalledWith({
+      email: "login-controller@example.com",
+      password: "StrongPassword123!",
+    });
   });
 });
