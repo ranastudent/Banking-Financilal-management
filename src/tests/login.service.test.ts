@@ -10,6 +10,16 @@ describe("Login Service", () => {
   const password = "StrongPassword123!";
 
   beforeEach(async () => {
+    await prisma.refreshToken.deleteMany({
+      where: {
+        user: {
+          email: {
+            startsWith: "login-test-",
+          },
+        },
+      },
+    });
+
     await prisma.emailVerificationOtp.deleteMany({
       where: {
         user: {
@@ -86,6 +96,29 @@ describe("Login Service", () => {
 
     expect(refreshPayload.sub).toBe(user.id);
     expect(refreshPayload.tokenType).toBe("refresh");
+
+    const storedRefreshToken = await prisma.refreshToken.findFirst({
+      where: {
+        userId: user.id,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    expect(storedRefreshToken).not.toBeNull();
+
+    expect(storedRefreshToken?.tokenHash).toBeDefined();
+
+    expect(storedRefreshToken?.tokenHash).not.toBe(
+      result.refreshToken,
+    );
+
+    expect(storedRefreshToken?.revokedAt).toBeNull();
+
+    expect(storedRefreshToken?.expiresAt.getTime()).toBeGreaterThan(
+      Date.now(),
+    );
   });
 
   it("should reject an unknown email", async () => {

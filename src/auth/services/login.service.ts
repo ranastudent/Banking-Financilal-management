@@ -8,8 +8,11 @@ import {
   generateAccessToken,
   generateRefreshToken,
 } from "../utils/jwt";
+import { hashRefreshToken } from "../utils/refreshTokenHash";
 
 const INVALID_CREDENTIALS_MESSAGE = "Invalid email or password";
+
+const REFRESH_TOKEN_EXPIRES_IN_DAYS = 7;
 
 export const loginUser = async (input: LoginInput) => {
   const email = input.email.trim().toLowerCase();
@@ -74,6 +77,21 @@ export const loginUser = async (input: LoginInput) => {
 
   const accessToken = generateAccessToken(authUser);
   const refreshToken = generateRefreshToken(authUser);
+
+  const refreshTokenHash = hashRefreshToken(refreshToken);
+
+  const expiresAt = new Date(
+    Date.now() +
+      REFRESH_TOKEN_EXPIRES_IN_DAYS * 24 * 60 * 60 * 1000,
+  );
+
+  await prisma.refreshToken.create({
+    data: {
+      userId: user.id,
+      tokenHash: refreshTokenHash,
+      expiresAt,
+    },
+  });
 
   return {
     user: {
