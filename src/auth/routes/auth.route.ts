@@ -1,9 +1,13 @@
 import { Router } from "express";
 
 import { register } from "../controllers/auth.controller";
+import { login } from "../controllers/login.controller";
 import { verifyEmailController } from "../controllers/verify-email.controller";
 
-import { registerSchema } from "../schemas/auth.schema";
+import {
+  loginSchema,
+  registerSchema,
+} from "../schemas/auth.schema";
 import { verifyEmailSchema } from "../schemas/verifyEmail.schema";
 
 import { validate } from "../../middleware/validate";
@@ -14,6 +18,12 @@ router.post(
   "/register",
   validate({ body: registerSchema }),
   register,
+);
+
+router.post(
+  "/login",
+  validate({ body: loginSchema }),
+  login,
 );
 
 router.post(
