@@ -1,25 +1,16 @@
-import { prisma } from "../../config/prisma";
 import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
 import type { RefreshTokenInput } from "../schemas/refresh-token.schema";
-import { hashRefreshToken } from "../utils/refreshTokenHash";
+import { revokeRefreshToken } from "./token-revocation.service";
 
 export const logoutUser = async (
   input: RefreshTokenInput,
 ): Promise<void> => {
-  const tokenHash = hashRefreshToken(input.refreshToken);
+  const revoked = await revokeRefreshToken(
+    input.refreshToken,
+  );
 
-  const result = await prisma.refreshToken.updateMany({
-    where: {
-      tokenHash,
-      revokedAt: null,
-    },
-    data: {
-      revokedAt: new Date(),
-    },
-  });
-
-  if (result.count === 0) {
+  if (!revoked) {
     throw new AppError(
       "Invalid or already revoked refresh token",
       401,
