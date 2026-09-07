@@ -15,35 +15,41 @@ import { verifyEmailSchema } from "../schemas/verifyEmail.schema";
 import { refreshTokenSchema } from "../schemas/refresh-token.schema";
 
 import { validate } from "../../middleware/validate";
+import { authRateLimiter } from "../../middleware/rateLimiter";
 
 const router = Router();
 
 router.post(
   "/register",
+  authRateLimiter,
   validate({ body: registerSchema }),
   register,
 );
 
 router.post(
   "/login",
+  authRateLimiter,
   validate({ body: loginSchema }),
   login,
 );
 
 router.post(
   "/verify-email",
+  authRateLimiter,
   validate({ body: verifyEmailSchema }),
   verifyEmailController,
 );
 
 router.post(
   "/refresh",
+  authRateLimiter,
   validate({ body: refreshTokenSchema }),
   refreshToken,
 );
 
 router.post(
   "/logout",
+  authRateLimiter,
   validate({ body: refreshTokenSchema }),
   logout,
 );
