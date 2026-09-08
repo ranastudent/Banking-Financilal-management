@@ -12,35 +12,48 @@ export const authenticate = (
   _res: Response,
   next: NextFunction,
 ): void => {
-const authorization = req.header("Authorization");
+  const authorization = req.header("Authorization");
 
-let token: string;
+  let token: string;
 
-try {
-  token = extractBearerToken(authorization);
-} catch (error) {
-  if (
-    error instanceof Error &&
-    error.message === "Authentication required"
-  ) {
+  // ------------------------------------------------------------
+  // 1. Extract Bearer token
+  // ------------------------------------------------------------
+
+  try {
+    token = extractBearerToken(authorization);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "Authentication required"
+    ) {
+      throw new AppError(
+        "Authentication required",
+        401,
+        ErrorCode.UNAUTHORIZED,
+      );
+    }
+
     throw new AppError(
-      "Authentication required",
+      "Invalid authorization header",
       401,
       ErrorCode.UNAUTHORIZED,
     );
   }
 
-  throw new AppError(
-    "Invalid authorization header",
-    401,
-    ErrorCode.UNAUTHORIZED,
-  );
-}
+  // ------------------------------------------------------------
+  // 2. Verify JWT access token
+  // ------------------------------------------------------------
+
   try {
     const decoded = jwt.verify(
       token,
       env.jwtAccessSecret,
     );
+
+    // ----------------------------------------------------------
+    // 3. Make sure decoded JWT is an object
+    // ----------------------------------------------------------
 
     if (
       typeof decoded === "string" ||
@@ -56,11 +69,16 @@ try {
 
     const payload = decoded as JwtPayload;
 
+    // ----------------------------------------------------------
+    // 4. Validate access-token payload
+    // ----------------------------------------------------------
+
     if (
       typeof payload.sub !== "string" ||
       typeof payload.email !== "string" ||
       typeof payload.role !== "string" ||
-      typeof payload.status !== "string"
+      typeof payload.status !== "string" ||
+      payload.tokenType !== "access"
     ) {
       throw new AppError(
         "Invalid access token payload",
@@ -69,6 +87,10 @@ try {
       );
     }
 
+    // ----------------------------------------------------------
+    // 5. Build authenticated user
+    // ----------------------------------------------------------
+
     const user: AuthUser = {
       id: payload.sub,
       email: payload.email,
@@ -76,7 +98,15 @@ try {
       status: payload.status as AuthUser["status"],
     };
 
+    // ----------------------------------------------------------
+    // 6. Attach authenticated user to request
+    // ----------------------------------------------------------
+
     req.user = user;
+
+    // ----------------------------------------------------------
+    // 7. Continue request
+    // ----------------------------------------------------------
 
     next();
   } catch (error) {

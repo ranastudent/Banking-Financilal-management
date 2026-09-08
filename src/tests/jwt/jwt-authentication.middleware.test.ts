@@ -42,18 +42,19 @@ describe("JWT Authentication Middleware", () => {
   };
 
   const createAccessToken = (): string =>
-    jwt.sign(
-      {
-        sub: user.id,
-        email: user.email,
-        role: user.role,
-        status: user.status,
-      },
-      env.jwtAccessSecret,
-      {
-        expiresIn: "15m",
-      },
-    );
+  jwt.sign(
+    {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      status: user.status,
+      tokenType: "access",
+    },
+    env.jwtAccessSecret,
+    {
+      expiresIn: "15m",
+    },
+  );
 
   const createRefreshToken = (): string =>
     jwt.sign(
