@@ -5,15 +5,24 @@ import { env } from "../config/env";
 import { AppError } from "../errors/AppError";
 import { ErrorCode } from "../errors/errorCodes";
 import type { AuthUser } from "../types/auth";
+import { extractBearerToken } from "../utils/bearerToken";
 
 export const authenticate = (
   req: Request,
   _res: Response,
   next: NextFunction,
 ): void => {
-  const authorization = req.header("Authorization");
+const authorization = req.header("Authorization");
 
-  if (!authorization) {
+let token: string;
+
+try {
+  token = extractBearerToken(authorization);
+} catch (error) {
+  if (
+    error instanceof Error &&
+    error.message === "Authentication required"
+  ) {
     throw new AppError(
       "Authentication required",
       401,
@@ -21,16 +30,12 @@ export const authenticate = (
     );
   }
 
-  const [scheme, token] = authorization.trim().split(/\s+/);
-
-  if (scheme !== "Bearer" || !token) {
-    throw new AppError(
-      "Invalid authorization header",
-      401,
-      ErrorCode.UNAUTHORIZED,
-    );
-  }
-
+  throw new AppError(
+    "Invalid authorization header",
+    401,
+    ErrorCode.UNAUTHORIZED,
+  );
+}
   try {
     const decoded = jwt.verify(
       token,
