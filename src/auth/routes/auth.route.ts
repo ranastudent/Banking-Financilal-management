@@ -16,6 +16,8 @@ import { refreshTokenSchema } from "../schemas/refresh-token.schema";
 
 import { validate } from "../../middleware/validate";
 import { authRateLimiter } from "../../middleware/rateLimiter";
+import { authenticate } from "../../middleware/authenticate";
+import { getMe } from "../controllers/me.controller";
 
 const router = Router();
 
@@ -53,5 +55,7 @@ router.post(
   validate({ body: refreshTokenSchema }),
   logout,
 );
+
+router.get("/me", authenticate, getMe);
 
 export default router;
