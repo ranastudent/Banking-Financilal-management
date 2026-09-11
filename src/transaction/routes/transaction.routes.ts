@@ -4,6 +4,7 @@ import { authenticate } from "../../middleware/authenticate";
 import { authorize } from "../../middleware/authorize";
 import { authorizeDeposit } from "../controllers/deposit.controller";
 import { withdrawalAuthorizationController } from "../controllers/withdrawal.controller";
+import { transferAuthorizationController } from "../controllers/transfer.controller";
 
 const router = Router();
 
@@ -19,6 +20,13 @@ router.post(
   authenticate,
   authorize("CUSTOMER", "ADMIN"),
   withdrawalAuthorizationController,
+);
+
+router.post(
+  "/transfer/:sourceAccountId/:destinationAccountId",
+  authenticate,
+  authorize("CUSTOMER", "ADMIN"),
+  transferAuthorizationController,
 );
 
 export default router;
