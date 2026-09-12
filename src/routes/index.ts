@@ -6,6 +6,7 @@ import beneficiaryRoutes from "../transaction/routes/beneficiary.routes";
 import fxRequestRoutes from "../transaction/routes/fx-request.routes";
 import adminUserRoutes from "../admin/routes/user.routes";
 import adminAccountRoutes from "../admin/routes/account.routes";
+import adminTransactionRoutes from "../admin/routes/transaction.routes";
 
 const router = Router();
 
@@ -16,5 +17,6 @@ router.use("/beneficiaries", beneficiaryRoutes);
 router.use("/fx-requests", fxRequestRoutes);
 router.use("/admin/users", adminUserRoutes);
 router.use("/admin/accounts", adminAccountRoutes);
+router.use("/admin/transactions", adminTransactionRoutes);
 
 export default router;
