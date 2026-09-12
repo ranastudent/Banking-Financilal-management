@@ -7,6 +7,7 @@ import { withdrawalAuthorizationController } from "../controllers/withdrawal.con
 import { transferAuthorizationController } from "../controllers/transfer.controller";
 import { getTransaction } from "../controllers/transaction.controller";
 
+
 const router = Router();
 
 router.post(
@@ -36,5 +37,7 @@ router.get(
   authorize("CUSTOMER", "ADMIN", "SUPPORT", "AUDITOR"),
   getTransaction,
 );
+
+
 
 export default router;
