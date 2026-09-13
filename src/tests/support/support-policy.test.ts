@@ -143,4 +143,13 @@ describe("SUPPORT Authorization Policy", () => {
       ),
     ).toThrow("This support operation is not permitted");
   });
+
+  it("should allow SUPPORT to record a customer support operation", () => {
+  expect(() =>
+    assertSupportPermission(
+      supportUser,
+      SupportPermission.CUSTOMER_SUPPORT_OPERATION,
+    ),
+  ).not.toThrow();
+});
 });

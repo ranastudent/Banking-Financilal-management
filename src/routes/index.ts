@@ -15,6 +15,7 @@ import adminApprovalRoutes from "../admin/routes/approval.routes";
 import supportCustomerRoutes from "../support/routes/customer.routes";
 import supportAccountRoutes from "../support/routes/account.routes";
 import supportTransactionRoutes from "../support/routes/transaction.routes";
+import supportOperationRoutes from "../support/routes/support-operation.routes";
 
 const router = Router();
 
@@ -34,5 +35,6 @@ router.use("/admin/approvals", adminApprovalRoutes,);
 router.use("/support/customers",supportCustomerRoutes,);
 router.use("/support/customers/accounts",supportAccountRoutes,);
 router.use("/support/customers",supportTransactionRoutes,);
+router.use("/support/customers",supportOperationRoutes,);
 
 export default router;
