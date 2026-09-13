@@ -9,7 +9,7 @@ const router = Router();
 router.get(
   "/:beneficiaryId",
   authenticate,
-  authorize("CUSTOMER", "ADMIN", "SUPPORT", "AUDITOR"),
+  authorize("CUSTOMER", "ADMIN", "AUDITOR"),
   getBeneficiary,
 );
 

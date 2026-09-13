@@ -158,7 +158,7 @@ describe("Own Beneficiary Authorization", () => {
     expect(response.body.data.beneficiary.id).toBe(beneficiary.id);
   });
 
-  it("should allow SUPPORT to view a beneficiary", async () => {
+  it("should reject SUPPORT from the generic beneficiary route", async () => {
     const support = await createUser("SUPPORT", "support");
     const customer = await createUser("CUSTOMER", "customer");
 
@@ -170,9 +170,9 @@ describe("Own Beneficiary Authorization", () => {
       .get(`/api/v1/beneficiaries/${beneficiary.id}`)
       .set("Authorization", `Bearer ${token}`);
 
-    expect(response.status).toBe(200);
-    expect(response.body.success).toBe(true);
-    expect(response.body.data.beneficiary.id).toBe(beneficiary.id);
+    expect(response.status).toBe(403);
+    expect(response.body.success).toBe(false);
+    expect(response.body.error.code).toBe("FORBIDDEN");
   });
 
   it("should allow AUDITOR to view a beneficiary", async () => {
