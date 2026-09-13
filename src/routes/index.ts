@@ -11,6 +11,7 @@ import adminAuditLogRoutes from "../admin/routes/audit-log.routes";
 import adminCurrencyRoutes from "../admin/routes/currency.routes";
 import adminExchangeRateRoutes from "../admin/routes/exchange-rate.routes";
 import adminCurrencyReserveRoutes from "../admin/routes/currency-reserve.routes";
+import adminApprovalRoutes from "../admin/routes/approval.routes";
 
 const router = Router();
 
@@ -26,6 +27,7 @@ router.use("/admin/audit-logs", adminAuditLogRoutes);
 router.use("/admin/currencies", adminCurrencyRoutes);
 router.use("/admin/exchange-rates", adminExchangeRateRoutes);
 router.use("/admin/currency-reserves",adminCurrencyReserveRoutes,);
+router.use("/admin/approvals", adminApprovalRoutes,);
 
 
 export default router;
