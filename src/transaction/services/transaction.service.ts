@@ -15,16 +15,48 @@ export const authorizeTransactionView = async (
     );
   }
 
-  if (
-    userRole === "ADMIN" ||
-    userRole === "SUPPORT" ||
-    userRole === "AUDITOR"
-  ) {
-    const transaction = await prisma.transaction.findUnique({
-      where: {
-        id: transactionId,
-      },
-    });
+  if (userRole === "ADMIN" || userRole === "AUDITOR") {
+    const transaction =
+      await prisma.transaction.findUnique({
+        where: {
+          id: transactionId,
+        },
+      });
+
+    if (!transaction) {
+      throw new AppError(
+        "Transaction not found",
+        404,
+        ErrorCode.RESOURCE_NOT_FOUND,
+      );
+    }
+
+    return transaction;
+  }
+
+  if (userRole === "SUPPORT") {
+    const transaction =
+      await prisma.transaction.findFirst({
+        where: {
+          id: transactionId,
+          OR: [
+            {
+              sourceAccount: {
+                user: {
+                  role: "CUSTOMER",
+                },
+              },
+            },
+            {
+              destinationAccount: {
+                user: {
+                  role: "CUSTOMER",
+                },
+              },
+            },
+          ],
+        },
+      });
 
     if (!transaction) {
       throw new AppError(
