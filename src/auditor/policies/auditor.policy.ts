@@ -1,25 +1,26 @@
-import type { AuthUser } from "../../types/auth";
 import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
+import type { AuthUser } from "../../types/auth";
 
 export const AUDITOR_ROLE = "AUDITOR" as const;
 
 export const AuditorPermission = {
   AUDIT_LOG_VIEW: "AUDIT_LOG_VIEW",
+  TRANSACTION_HISTORY_VIEW: "TRANSACTION_HISTORY_VIEW",
 } as const;
 
 export type AuditorPermission =
   (typeof AuditorPermission)[keyof typeof AuditorPermission];
 
-const AUDITOR_ALLOWED_PERMISSIONS =
-  new Set<AuditorPermission>([
-    AuditorPermission.AUDIT_LOG_VIEW,
-  ]);
+const ALLOWED_AUDITOR_PERMISSIONS = new Set<AuditorPermission>([
+  AuditorPermission.AUDIT_LOG_VIEW,
+  AuditorPermission.TRANSACTION_HISTORY_VIEW,
+]);
 
 export const assertAuditorPermission = (
   user: AuthUser | undefined,
   permission: AuditorPermission,
-): AuthUser => {
+): void => {
   if (!user) {
     throw new AppError(
       "Authentication required",
@@ -30,19 +31,17 @@ export const assertAuditorPermission = (
 
   if (user.role !== AUDITOR_ROLE) {
     throw new AppError(
-      "You do not have permission to perform this auditor operation",
+      "You do not have permission to access this resource",
       403,
       ErrorCode.FORBIDDEN,
     );
   }
 
-  if (!AUDITOR_ALLOWED_PERMISSIONS.has(permission)) {
+  if (!ALLOWED_AUDITOR_PERMISSIONS.has(permission)) {
     throw new AppError(
-      "This auditor operation is not permitted",
+      "You do not have permission to perform this action",
       403,
       ErrorCode.FORBIDDEN,
     );
   }
-
-  return user;
 };

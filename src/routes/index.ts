@@ -19,6 +19,7 @@ import supportOperationRoutes from "../support/routes/support-operation.routes";
 import supportBeneficiaryRoutes from "../support/routes/beneficiary.routes";
 import supportAuditLogRoutes from "../support/routes/audit-log.routes";
 import auditorAuditLogRoutes from "../auditor/routes/audit-log.routes";
+import auditorTransactionRoutes from "../auditor/routes/transaction.routes";
 
 const router = Router();
 
@@ -42,5 +43,6 @@ router.use("/support/customers",supportOperationRoutes,);
 router.use("/support/customers", supportBeneficiaryRoutes,);
 router.use("/support/audit-logs",supportAuditLogRoutes,);
 router.use("/auditor/audit-logs", auditorAuditLogRoutes,);
+router.use("/auditor/transactions", auditorTransactionRoutes,);
 
 export default router;
