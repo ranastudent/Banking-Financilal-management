@@ -154,7 +154,7 @@ describe("ADMIN Audit Log Read Authorization", () => {
     expect(response.body.data.auditLog.id).toBe(auditLog.id);
   });
 
-  it("should allow SUPPORT to view an audit log by ID", async () => {
+  it("should reject SUPPORT from the ADMIN audit log route by ID", async () => {
     const support = await createTestUser("SUPPORT");
     const auditLog = await createTestAuditLog();
 
@@ -164,10 +164,9 @@ describe("ADMIN Audit Log Read Authorization", () => {
       .get(`/api/v1/admin/audit-logs/${auditLog.id}`)
       .set("Authorization", `Bearer ${token}`);
 
-    expect(response.status).toBe(200);
-    expect(response.body.success).toBe(true);
-
-    expect(response.body.data.auditLog.id).toBe(auditLog.id);
+    expect(response.status).toBe(403);
+    expect(response.body.success).toBe(false);
+    expect(response.body.error.code).toBe("FORBIDDEN");
   });
 
   it("should reject CUSTOMER from viewing an audit log by ID", async () => {
@@ -317,7 +316,7 @@ describe("ADMIN Audit Log Read Authorization", () => {
     expect(Array.isArray(response.body.data.auditLogs)).toBe(true);
   });
 
-  it("should allow SUPPORT to list audit logs", async () => {
+  it("should reject SUPPORT from the ADMIN audit log list", async () => {
     const support = await createTestUser("SUPPORT");
 
     await createTestAuditLog();
@@ -328,9 +327,9 @@ describe("ADMIN Audit Log Read Authorization", () => {
       .get("/api/v1/admin/audit-logs?page=1&limit=10")
       .set("Authorization", `Bearer ${token}`);
 
-    expect(response.status).toBe(200);
-    expect(response.body.success).toBe(true);
-    expect(Array.isArray(response.body.data.auditLogs)).toBe(true);
+    expect(response.status).toBe(403);
+    expect(response.body.success).toBe(false);
+    expect(response.body.error.code).toBe("FORBIDDEN");
   });
 
   it("should reject CUSTOMER from listing audit logs", async () => {

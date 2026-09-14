@@ -11,14 +11,14 @@ const router = Router();
 router.get(
   "/",
   authenticate,
-  authorize("ADMIN", "AUDITOR", "SUPPORT"),
+  authorize("ADMIN", "AUDITOR",),
   getAuditLogs,
 );
 
 router.get(
   "/:auditLogId",
   authenticate,
-  authorize("ADMIN", "AUDITOR", "SUPPORT"),
+  authorize("ADMIN", "AUDITOR",),
   getAuditLog,
 );
 
