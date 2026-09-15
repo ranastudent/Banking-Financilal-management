@@ -24,6 +24,7 @@ import auditorAccountRoutes from "../auditor/routes/account.routes";
 import auditorApprovalRoutes from "../auditor/routes/approval-record.routes";
 import auditorApprovalRecordRoutes from "../auditor/routes/approval-record.routes";
 import auditorFxRequestRoutes from "../auditor/routes/fx-request.routes";
+import userRoutes from "../user/routes/user.routes";
 
 const router = Router();
 
@@ -52,5 +53,6 @@ router.use("/auditor/accounts", auditorAccountRoutes,);
 router.use("/auditor/approvals", auditorApprovalRoutes,); 
 router.use("/auditor/approval-records", auditorApprovalRecordRoutes,); 
 router.use("/auditor/fx-requests", auditorFxRequestRoutes,); 
+router.use("/users", userRoutes);
 
 export default router;
