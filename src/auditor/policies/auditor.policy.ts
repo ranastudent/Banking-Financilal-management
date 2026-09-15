@@ -9,6 +9,7 @@ export const AuditorPermission = {
   TRANSACTION_HISTORY_VIEW: "TRANSACTION_HISTORY_VIEW",
   ACCOUNT_ACTIVITY_VIEW: "ACCOUNT_ACTIVITY_VIEW",
   APPROVAL_RECORD_VIEW: "APPROVAL_RECORD_VIEW",
+  FX_REQUEST_HISTORY_VIEW: "FX_REQUEST_HISTORY_VIEW",
 } as const;
 
 export type AuditorPermission =
@@ -19,6 +20,7 @@ const ALLOWED_AUDITOR_PERMISSIONS = new Set<AuditorPermission>([
   AuditorPermission.TRANSACTION_HISTORY_VIEW,
   AuditorPermission.ACCOUNT_ACTIVITY_VIEW,
   AuditorPermission.APPROVAL_RECORD_VIEW,
+  AuditorPermission.FX_REQUEST_HISTORY_VIEW,
 ]);
 
 export const assertAuditorPermission = (
