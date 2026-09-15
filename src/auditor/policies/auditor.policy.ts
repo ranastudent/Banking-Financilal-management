@@ -7,6 +7,7 @@ export const AUDITOR_ROLE = "AUDITOR" as const;
 export const AuditorPermission = {
   AUDIT_LOG_VIEW: "AUDIT_LOG_VIEW",
   TRANSACTION_HISTORY_VIEW: "TRANSACTION_HISTORY_VIEW",
+  ACCOUNT_ACTIVITY_VIEW: "ACCOUNT_ACTIVITY_VIEW",
 } as const;
 
 export type AuditorPermission =
@@ -15,6 +16,7 @@ export type AuditorPermission =
 const ALLOWED_AUDITOR_PERMISSIONS = new Set<AuditorPermission>([
   AuditorPermission.AUDIT_LOG_VIEW,
   AuditorPermission.TRANSACTION_HISTORY_VIEW,
+  AuditorPermission.ACCOUNT_ACTIVITY_VIEW,
 ]);
 
 export const assertAuditorPermission = (
