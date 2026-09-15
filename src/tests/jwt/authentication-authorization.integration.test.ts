@@ -1,5 +1,6 @@
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import crypto from "node:crypto";
 
 import app from "../../app";
 import { prisma } from "../../config/prisma";
@@ -8,10 +9,42 @@ import * as emailService from "../../auth/services/email.service";
 describe("Authentication + Authorization Full Integration", () => {
   const userPassword = "StrongPassword123!";
 
-  beforeEach(async () => {
-    await prisma.refreshToken.deleteMany();
-    await prisma.emailVerificationOtp.deleteMany();
-    await prisma.user.deleteMany();
+  const createdUserIds: string[] = [];
+
+  const createTestEmail = (label: string) =>
+    `${label}.${crypto.randomUUID()}@example.com`;
+
+  afterEach(async () => {
+    if (createdUserIds.length === 0) {
+      return;
+    }
+
+    const userIds = [...createdUserIds];
+    createdUserIds.length = 0;
+
+    await prisma.refreshToken.deleteMany({
+      where: {
+        userId: {
+          in: userIds,
+        },
+      },
+    });
+
+    await prisma.emailVerificationOtp.deleteMany({
+      where: {
+        userId: {
+          in: userIds,
+        },
+      },
+    });
+
+    await prisma.user.deleteMany({
+      where: {
+        id: {
+          in: userIds,
+        },
+      },
+    });
   });
 
   it("should allow a real ADMIN user to login and access the ADMIN route", async () => {
@@ -19,52 +52,61 @@ describe("Authentication + Authorization Full Integration", () => {
       .spyOn(emailService, "sendRegistrationOtpEmail")
       .mockResolvedValue(undefined);
 
-    const registerResponse = await request(app)
-      .post("/api/v1/auth/register")
-      .send({
-        name: "Admin User",
-        email: "admin.integration@example.com",
-        password: userPassword,
+    try {
+      const email = createTestEmail("admin.integration");
+
+      const registerResponse = await request(app)
+        .post("/api/v1/auth/register")
+        .send({
+          name: "Admin User",
+          email,
+          password: userPassword,
+        });
+
+      expect(registerResponse.status).toBe(201);
+
+      const user = await prisma.user.update({
+        where: {
+          email,
+        },
+        data: {
+          role: "ADMIN",
+          status: "ACTIVE",
+          emailVerifiedAt: new Date(),
+        },
       });
 
-    expect(registerResponse.status).toBe(201);
+      createdUserIds.push(user.id);
 
-    const user = await prisma.user.update({
-      where: {
-        email: "admin.integration@example.com",
-      },
-      data: {
-        role: "ADMIN",
-        status: "ACTIVE",
-        emailVerifiedAt: new Date(),
-      },
-    });
+      expect(user.role).toBe("ADMIN");
 
-    expect(user.role).toBe("ADMIN");
+      const loginResponse = await request(app)
+        .post("/api/v1/auth/login")
+        .send({
+          email,
+          password: userPassword,
+        });
 
-    const loginResponse = await request(app)
-      .post("/api/v1/auth/login")
-      .send({
-        email: "admin.integration@example.com",
-        password: userPassword,
-      });
+      expect(loginResponse.status).toBe(200);
+      expect(loginResponse.body.data.accessToken).toEqual(
+        expect.any(String),
+      );
 
-    expect(loginResponse.status).toBe(200);
-    expect(loginResponse.body.data.accessToken).toEqual(
-      expect.any(String),
-    );
+      const accessToken =
+        loginResponse.body.data.accessToken;
 
-    const accessToken = loginResponse.body.data.accessToken;
+      const protectedResponse = await request(app)
+        .get("/api/v1/admin/test")
+        .set("Authorization", `Bearer ${accessToken}`);
 
-    const protectedResponse = await request(app)
-      .get("/api/v1/admin/test")
-      .set("Authorization", `Bearer ${accessToken}`);
-
-    expect(protectedResponse.status).toBe(200);
-    expect(protectedResponse.body.success).toBe(true);
-    expect(protectedResponse.body.data.user.role).toBe("ADMIN");
-
-    sendOtpSpy.mockRestore();
+      expect(protectedResponse.status).toBe(200);
+      expect(protectedResponse.body.success).toBe(true);
+      expect(
+        protectedResponse.body.data.user.role,
+      ).toBe("ADMIN");
+    } finally {
+      sendOtpSpy.mockRestore();
+    }
   });
 
   it("should allow a real CUSTOMER user to login but reject the ADMIN route", async () => {
@@ -72,50 +114,64 @@ describe("Authentication + Authorization Full Integration", () => {
       .spyOn(emailService, "sendRegistrationOtpEmail")
       .mockResolvedValue(undefined);
 
-    await request(app)
-      .post("/api/v1/auth/register")
-      .send({
-        name: "Customer User",
-        email: "customer.integration@example.com",
-        password: userPassword,
+    try {
+      const email = createTestEmail(
+        "customer.integration",
+      );
+
+      const registerResponse = await request(app)
+        .post("/api/v1/auth/register")
+        .send({
+          name: "Customer User",
+          email,
+          password: userPassword,
+        });
+
+      expect(registerResponse.status).toBe(201);
+
+      const user = await prisma.user.update({
+        where: {
+          email,
+        },
+        data: {
+          role: "CUSTOMER",
+          status: "ACTIVE",
+          emailVerifiedAt: new Date(),
+        },
       });
 
-    await prisma.user.update({
-      where: {
-        email: "customer.integration@example.com",
-      },
-      data: {
-        role: "CUSTOMER",
-        status: "ACTIVE",
-        emailVerifiedAt: new Date(),
-      },
-    });
+      createdUserIds.push(user.id);
 
-    const loginResponse = await request(app)
-      .post("/api/v1/auth/login")
-      .send({
-        email: "customer.integration@example.com",
-        password: userPassword,
-      });
+      const loginResponse = await request(app)
+        .post("/api/v1/auth/login")
+        .send({
+          email,
+          password: userPassword,
+        });
 
-    expect(loginResponse.status).toBe(200);
+      expect(loginResponse.status).toBe(200);
 
-    const accessToken = loginResponse.body.data.accessToken;
+      const accessToken =
+        loginResponse.body.data.accessToken;
 
-    const protectedResponse = await request(app)
-      .get("/api/v1/admin/test")
-      .set("Authorization", `Bearer ${accessToken}`);
+      const protectedResponse = await request(app)
+        .get("/api/v1/admin/test")
+        .set("Authorization", `Bearer ${accessToken}`);
 
-    expect(protectedResponse.status).toBe(403);
-    expect(protectedResponse.body.success).toBe(false);
-    expect(protectedResponse.body.error.code).toBe("FORBIDDEN");
-
-    sendOtpSpy.mockRestore();
+      expect(protectedResponse.status).toBe(403);
+      expect(protectedResponse.body.success).toBe(false);
+      expect(protectedResponse.body.error.code).toBe(
+        "FORBIDDEN",
+      );
+    } finally {
+      sendOtpSpy.mockRestore();
+    }
   });
 
   it("should reject access when no authentication is provided", async () => {
-    const response = await request(app)
-      .get("/api/v1/admin/test");
+    const response = await request(app).get(
+      "/api/v1/admin/test",
+    );
 
     expect(response.status).toBe(401);
     expect(response.body.success).toBe(false);
@@ -127,50 +183,61 @@ describe("Authentication + Authorization Full Integration", () => {
       .spyOn(emailService, "sendRegistrationOtpEmail")
       .mockResolvedValue(undefined);
 
-    await request(app)
-      .post("/api/v1/auth/register")
-      .send({
-        name: "Identity Admin",
-        email: "identity.admin@example.com",
-        password: userPassword,
+    try {
+      const email = createTestEmail("identity.admin");
+
+      const registerResponse = await request(app)
+        .post("/api/v1/auth/register")
+        .send({
+          name: "Identity Admin",
+          email,
+          password: userPassword,
+        });
+
+      expect(registerResponse.status).toBe(201);
+
+      const user = await prisma.user.update({
+        where: {
+          email,
+        },
+        data: {
+          role: "ADMIN",
+          status: "ACTIVE",
+          emailVerifiedAt: new Date(),
+        },
       });
 
-    const user = await prisma.user.update({
-      where: {
-        email: "identity.admin@example.com",
-      },
-      data: {
+      createdUserIds.push(user.id);
+
+      const loginResponse = await request(app)
+        .post("/api/v1/auth/login")
+        .send({
+          email: user.email,
+          password: userPassword,
+        });
+
+      expect(loginResponse.status).toBe(200);
+
+      const accessToken =
+        loginResponse.body.data.accessToken;
+
+      const protectedResponse = await request(app)
+        .get("/api/v1/admin/test")
+        .set("Authorization", `Bearer ${accessToken}`);
+
+      expect(protectedResponse.status).toBe(200);
+
+      expect(
+        protectedResponse.body.data.user,
+      ).toEqual({
+        id: user.id,
+        email: user.email,
         role: "ADMIN",
         status: "ACTIVE",
-        emailVerifiedAt: new Date(),
-      },
-    });
-
-    const loginResponse = await request(app)
-      .post("/api/v1/auth/login")
-      .send({
-        email: user.email,
-        password: userPassword,
       });
-
-    expect(loginResponse.status).toBe(200);
-
-    const accessToken = loginResponse.body.data.accessToken;
-
-    const protectedResponse = await request(app)
-      .get("/api/v1/admin/test")
-      .set("Authorization", `Bearer ${accessToken}`);
-
-    expect(protectedResponse.status).toBe(200);
-
-    expect(protectedResponse.body.data.user).toEqual({
-      id: user.id,
-      email: user.email,
-      role: "ADMIN",
-      status: "ACTIVE",
-    });
-
-    sendOtpSpy.mockRestore();
+    } finally {
+      sendOtpSpy.mockRestore();
+    }
   });
 
   it("should not allow client-supplied identity to override JWT identity", async () => {
@@ -178,54 +245,73 @@ describe("Authentication + Authorization Full Integration", () => {
       .spyOn(emailService, "sendRegistrationOtpEmail")
       .mockResolvedValue(undefined);
 
-    await request(app)
-      .post("/api/v1/auth/register")
-      .send({
-        name: "Real Admin",
-        email: "real.admin@example.com",
-        password: userPassword,
+    try {
+      const email = createTestEmail(
+        "identity-protection",
+      );
+
+      const registerResponse = await request(app)
+        .post("/api/v1/auth/register")
+        .send({
+          name: "Identity Protection User",
+          email,
+          password: userPassword,
+        });
+
+      expect(registerResponse.status).toBe(201);
+
+      const user = await prisma.user.update({
+        where: {
+          email,
+        },
+        data: {
+          role: "ADMIN",
+          status: "ACTIVE",
+          emailVerifiedAt: new Date(),
+        },
       });
 
-    await prisma.user.update({
-      where: {
-        email: "real.admin@example.com",
-      },
-      data: {
+      createdUserIds.push(user.id);
+
+      const loginResponse = await request(app)
+        .post("/api/v1/auth/login")
+        .send({
+          email: user.email,
+          password: userPassword,
+        });
+
+      expect(loginResponse.status).toBe(200);
+
+      const accessToken =
+        loginResponse.body.data.accessToken;
+
+      const attackerId = crypto.randomUUID();
+
+      const protectedResponse = await request(app)
+        .get("/api/v1/admin/test")
+        .set("Authorization", `Bearer ${accessToken}`)
+        .query({
+          userId: attackerId,
+          role: "CUSTOMER",
+        });
+
+      expect(protectedResponse.status).toBe(200);
+
+      expect(
+        protectedResponse.body.data.user,
+      ).toEqual({
+        id: user.id,
+        email: user.email,
         role: "ADMIN",
         status: "ACTIVE",
-        emailVerifiedAt: new Date(),
-      },
-    });
-
-    const loginResponse = await request(app)
-      .post("/api/v1/auth/login")
-      .send({
-        email: "real.admin@example.com",
-        password: userPassword,
       });
 
-    expect(loginResponse.status).toBe(200);
-
-    const accessToken = loginResponse.body.data.accessToken;
-
-    const response = await request(app)
-      .get("/api/v1/admin/test")
-      .set("Authorization", `Bearer ${accessToken}`)
-      .send({
-        userId: "attacker-user",
-        role: "CUSTOMER",
-        email: "attacker@example.com",
-      });
-
-    expect(response.status).toBe(200);
-
-    expect(response.body.data.user.email).toBe(
-      "real.admin@example.com",
-    );
-
-    expect(response.body.data.user.role).toBe("ADMIN");
-
-    sendOtpSpy.mockRestore();
+      expect(
+        protectedResponse.body.data.user.id,
+      ).not.toBe(attackerId);
+    } finally {
+      sendOtpSpy.mockRestore();
+    }
   });
 
   it("should include requestId throughout the full authentication and authorization flow", async () => {
@@ -233,45 +319,60 @@ describe("Authentication + Authorization Full Integration", () => {
       .spyOn(emailService, "sendRegistrationOtpEmail")
       .mockResolvedValue(undefined);
 
-    await request(app)
-      .post("/api/v1/auth/register")
-      .send({
-        name: "Request ID Admin",
-        email: "requestid.admin@example.com",
-        password: userPassword,
+    try {
+      const email = createTestEmail(
+        "requestid.admin",
+      );
+
+      const registerResponse = await request(app)
+        .post("/api/v1/auth/register")
+        .send({
+          name: "Request ID Admin",
+          email,
+          password: userPassword,
+        });
+
+      expect(registerResponse.status).toBe(201);
+
+      const user = await prisma.user.update({
+        where: {
+          email,
+        },
+        data: {
+          role: "ADMIN",
+          status: "ACTIVE",
+          emailVerifiedAt: new Date(),
+        },
       });
 
-    await prisma.user.update({
-      where: {
-        email: "requestid.admin@example.com",
-      },
-      data: {
-        role: "ADMIN",
-        status: "ACTIVE",
-        emailVerifiedAt: new Date(),
-      },
-    });
+      createdUserIds.push(user.id);
 
-    const loginResponse = await request(app)
-      .post("/api/v1/auth/login")
-      .send({
-        email: "requestid.admin@example.com",
-        password: userPassword,
-      });
+      const loginResponse = await request(app)
+        .post("/api/v1/auth/login")
+        .send({
+          email: user.email,
+          password: userPassword,
+        });
 
-    expect(loginResponse.status).toBe(200);
+      expect(loginResponse.status).toBe(200);
 
-    const accessToken = loginResponse.body.data.accessToken;
+      const accessToken =
+        loginResponse.body.data.accessToken;
 
-    const protectedResponse = await request(app)
-      .get("/api/v1/admin/test")
-      .set("Authorization", `Bearer ${accessToken}`);
+      const protectedResponse = await request(app)
+        .get("/api/v1/admin/test")
+        .set("Authorization", `Bearer ${accessToken}`);
 
-    expect(protectedResponse.status).toBe(200);
-    expect(protectedResponse.body.requestId).toEqual(
-      expect.any(String),
-    );
+      expect(protectedResponse.status).toBe(200);
+      expect(protectedResponse.body).toHaveProperty(
+        "requestId",
+      );
 
-    sendOtpSpy.mockRestore();
+      expect(
+        protectedResponse.body.requestId,
+      ).toEqual(expect.any(String));
+    } finally {
+      sendOtpSpy.mockRestore();
+    }
   });
 });
