@@ -4,7 +4,7 @@ import { prisma } from "../../config/prisma";
 import { hashPassword } from "../../auth/utils/password";
 import { generateRefreshToken } from "../../auth/utils/jwt";
 import { hashRefreshToken } from "../../auth/utils/refreshTokenHash";
-import { revokeRefreshToken } from "../../auth/services/token-revocation.service";
+import {  revokeAllRefreshTokensForUser, revokeRefreshToken } from "../../auth/services/token-revocation.service";
 
 describe("Token Revocation Service", () => {
   const password = "StrongPassword123!";
@@ -127,4 +127,82 @@ describe("Token Revocation Service", () => {
 
     expect(result).toBe(false);
   });
+
+  it("should revoke all active refresh tokens for a user", async () => {
+  const email = `revoke-test-${Date.now()}@example.com`;
+
+  const user = await createUser(email);
+
+  const firstToken = await createStoredToken(user);
+  const secondToken = await createStoredToken(user);
+  const thirdToken = await createStoredToken(user);
+
+  const revokedCount =
+    await revokeAllRefreshTokensForUser(user.id);
+
+  expect(revokedCount).toBe(3);
+
+  const tokens = await prisma.refreshToken.findMany({
+    where: {
+      userId: user.id,
+    },
+    select: {
+      id: true,
+      revokedAt: true,
+    },
+  });
+
+  expect(tokens).toHaveLength(3);
+
+  for (const token of tokens) {
+    expect(token.revokedAt).not.toBeNull();
+  }
+});
+
+it("should not modify already revoked refresh tokens", async () => {
+  const email = `revoke-test-${Date.now()}@example.com`;
+
+  const user = await createUser(email);
+
+  const firstToken = await createStoredToken(user);
+  const secondToken = await createStoredToken(user);
+
+  await prisma.refreshToken.update({
+    where: {
+      id: firstToken.record.id,
+    },
+    data: {
+      revokedAt: new Date("2025-01-01T00:00:00.000Z"),
+    },
+  });
+
+  const revokedCount =
+    await revokeAllRefreshTokensForUser(user.id);
+
+  expect(revokedCount).toBe(1);
+
+  const tokens = await prisma.refreshToken.findMany({
+    where: {
+      userId: user.id,
+    },
+    select: {
+      id: true,
+      revokedAt: true,
+    },
+  });
+
+  const first = tokens.find(
+    (token) => token.id === firstToken.record.id,
+  );
+
+  const second = tokens.find(
+    (token) => token.id === secondToken.record.id,
+  );
+
+  expect(first?.revokedAt).toEqual(
+    new Date("2025-01-01T00:00:00.000Z"),
+  );
+
+  expect(second?.revokedAt).not.toBeNull();
+});
 });

@@ -18,3 +18,19 @@ export const revokeRefreshToken = async (
 
   return result.count === 1;
 };
+
+export const revokeAllRefreshTokensForUser = async (
+  userId: string,
+): Promise<number> => {
+  const result = await prisma.refreshToken.updateMany({
+    where: {
+      userId,
+      revokedAt: null,
+    },
+    data: {
+      revokedAt: new Date(),
+    },
+  });
+
+  return result.count;
+};
