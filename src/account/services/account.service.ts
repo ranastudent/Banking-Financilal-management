@@ -7,6 +7,7 @@ import type { AuthUser } from "../../types/auth";
 import type { CreateAccountInput } from "../schemas/account.schema";
 import { getCustomerOwnedAccount } from "../policies/account.policy";
 
+
 const MAX_ACCOUNT_NUMBER_ATTEMPTS = 5;
 
 const generateAccountNumber = (): string => {
@@ -258,4 +259,86 @@ export const getCustomerAccountById = async (
   }
 
   return account;
+};
+
+export const updateCustomerAccountStatus = async (
+  accountId: string,
+  userId: string,
+  status: "ACTIVE" | "FROZEN" | "CLOSED",
+  ipAddress?: string,
+  userAgent?: string,
+) => {
+  const account = await getCustomerOwnedAccount(
+    accountId,
+    userId,
+  );
+
+  // CLOSED is terminal.
+  if (account.status === "CLOSED") {
+    throw new AppError(
+      "Closed account cannot be modified",
+      409,
+      ErrorCode.CONFLICT,
+    );
+  }
+
+  // No actual status change.
+  if (account.status === status) {
+    return prisma.account.findUnique({
+      where: {
+        id: accountId,
+      },
+      select: {
+        id: true,
+        userId: true,
+        accountNumber: true,
+        accountType: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+  }
+
+  const updatedAccount = await prisma.$transaction(
+    async (tx) => {
+      const updated = await tx.account.update({
+        where: {
+          id: accountId,
+        },
+        data: {
+          status,
+        },
+        select: {
+          id: true,
+          userId: true,
+          accountNumber: true,
+          accountType: true,
+          status: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: "ACCOUNT_STATUS_CHANGED",
+          entityType: "ACCOUNT",
+          entityId: accountId,
+          description: `Account ${account.accountNumber} status changed from ${account.status} to ${status}.`,
+          ipAddress: ipAddress ?? null,
+          userAgent: userAgent ?? null,
+          metadata: {
+            previousStatus: account.status,
+            newStatus: status,
+          },
+        },
+      });
+
+      return updated;
+    },
+  );
+
+  return updatedAccount;
 };

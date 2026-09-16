@@ -23,3 +23,17 @@ export const createAccountSchema = z
 export type CreateAccountInput = z.infer<
   typeof createAccountSchema
 >;
+
+export const updateAccountStatusSchema = z
+  .object({
+    status: z.enum([
+      "ACTIVE",
+      "FROZEN",
+      "CLOSED",
+    ]),
+  })
+  .strict();
+
+export type UpdateAccountStatusInput = z.infer<
+  typeof updateAccountStatusSchema
+>;

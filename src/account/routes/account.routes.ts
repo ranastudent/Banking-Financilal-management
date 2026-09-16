@@ -6,6 +6,7 @@ import { validate } from "../../middleware/validate";
 
 import {
   createAccount,
+  updateAccountStatus,
 } from "../controllers/account.controller";
 
 import {
@@ -15,6 +16,7 @@ import {
 
 import {
   createAccountSchema,
+  updateAccountStatusSchema,
 } from "../schemas/account.schema";
 
 const router = Router();
@@ -41,6 +43,16 @@ router.get(
   authenticate,
   authorize("CUSTOMER"),
   getAccount,
+);
+
+router.patch(
+  "/:accountId/status",
+  authenticate,
+  authorize("CUSTOMER"),
+  validate({
+    body: updateAccountStatusSchema,
+  }),
+  updateAccountStatus,
 );
 
 export default router;
