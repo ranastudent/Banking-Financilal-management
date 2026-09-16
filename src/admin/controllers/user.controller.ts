@@ -91,11 +91,22 @@ export const updateUserStatus = async (
 ): Promise<void> => {
   const { userId } = req.params;
 
-  if (typeof userId !== "string" || userId.length === 0) {
+  if (
+    typeof userId !== "string" ||
+    userId.trim() === ""
+  ) {
     throw new AppError(
       "User ID is required",
       400,
       ErrorCode.BAD_REQUEST,
+    );
+  }
+
+  if (!req.user) {
+    throw new AppError(
+      "Authentication required",
+      401,
+      ErrorCode.UNAUTHORIZED,
     );
   }
 
@@ -104,6 +115,9 @@ export const updateUserStatus = async (
   const user = await updateAdminUserStatus(
     userId,
     status,
+    req.user.id,
+    req.ip,
+    req.get("user-agent") ?? undefined,
   );
 
   res.status(200).json({

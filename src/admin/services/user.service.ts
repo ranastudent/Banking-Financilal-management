@@ -1,6 +1,7 @@
 import { prisma } from "../../config/prisma";
 import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
+import { revokeAllRefreshTokensForUser } from "../../auth/services/token-revocation.service";
 
 const SAFE_USER_SELECT = {
   id: true,
@@ -64,36 +65,72 @@ export const getAdminUserById = async (userId: string) => {
 export const updateAdminUserStatus = async (
   userId: string,
   status: "ACTIVE" | "BLOCKED" | "SUSPENDED",
+  adminUserId: string,
+  ipAddress?: string,
+  userAgent?: string,
 ) => {
-  const user = await prisma.user.findUnique({
-    where: {
-      id: userId,
-    },
-    select: {
-      id: true,
-      status: true,
-    },
+  const updatedUser = await prisma.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({
+      where: {
+        id: userId,
+      },
+      select: {
+        id: true,
+        status: true,
+      },
+    });
+
+    if (!user) {
+      throw new AppError(
+        "User not found",
+        404,
+        ErrorCode.RESOURCE_NOT_FOUND,
+      );
+    }
+
+    // No real change → no audit entry
+    if (user.status === status) {
+      return tx.user.findUnique({
+        where: {
+          id: userId,
+        },
+        select: SAFE_USER_SELECT,
+      });
+    }
+
+    const updated = await tx.user.update({
+      where: {
+        id: userId,
+      },
+      data: {
+        status,
+      },
+      select: SAFE_USER_SELECT,
+    });
+
+    await tx.auditLog.create({
+      data: {
+        userId: adminUserId,
+        action: "USER_STATUS_CHANGED",
+        entityType: "USER",
+        entityId: user.id,
+        description: `User ${user.id} status changed from ${user.status} to ${status}.`,
+        ipAddress: ipAddress ?? null,
+        userAgent: userAgent ?? null,
+        metadata: {
+          previousStatus: user.status,
+          newStatus: status,
+        },
+      },
+    });
+
+    return updated;
   });
 
-  if (!user) {
-    throw new AppError(
-      "User not found",
-      404,
-      ErrorCode.RESOURCE_NOT_FOUND,
-    );
+  // Revoke refresh tokens after BLOCKED/SUSPENDED
+  if (status === "BLOCKED" || status === "SUSPENDED") {
+    await revokeAllRefreshTokensForUser(userId);
   }
 
-  if (user.status === status) {
-    return user;
-  }
-
-  return prisma.user.update({
-    where: {
-      id: userId,
-    },
-    data: {
-      status,
-    },
-    select: SAFE_USER_SELECT,
-  });
+  return updatedUser;
 };
