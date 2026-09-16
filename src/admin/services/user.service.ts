@@ -60,3 +60,40 @@ export const getAdminUserById = async (userId: string) => {
 
   return user;
 };
+
+export const updateAdminUserStatus = async (
+  userId: string,
+  status: "ACTIVE" | "BLOCKED" | "SUSPENDED",
+) => {
+  const user = await prisma.user.findUnique({
+    where: {
+      id: userId,
+    },
+    select: {
+      id: true,
+      status: true,
+    },
+  });
+
+  if (!user) {
+    throw new AppError(
+      "User not found",
+      404,
+      ErrorCode.RESOURCE_NOT_FOUND,
+    );
+  }
+
+  if (user.status === status) {
+    return user;
+  }
+
+  return prisma.user.update({
+    where: {
+      id: userId,
+    },
+    data: {
+      status,
+    },
+    select: SAFE_USER_SELECT,
+  });
+};

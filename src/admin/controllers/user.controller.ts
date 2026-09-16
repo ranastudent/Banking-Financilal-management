@@ -2,9 +2,11 @@ import type { Request, Response } from "express";
 import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
 import {
+  updateAdminUserStatus,
   getAdminUserById,
   getAdminUsers,
 } from "../services/user.service";
+
 
 export const getUsers = async (
   req: Request,
@@ -79,6 +81,34 @@ export const getUser = async (
     data: {
       user,
     },
+    requestId: req.requestId,
+  });
+};
+
+export const updateUserStatus = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const { userId } = req.params;
+
+  if (typeof userId !== "string" || userId.length === 0) {
+    throw new AppError(
+      "User ID is required",
+      400,
+      ErrorCode.BAD_REQUEST,
+    );
+  }
+
+  const { status } = req.body;
+
+  const user = await updateAdminUserStatus(
+    userId,
+    status,
+  );
+
+  res.status(200).json({
+    success: true,
+    data: user,
     requestId: req.requestId,
   });
 };
