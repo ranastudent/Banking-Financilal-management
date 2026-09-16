@@ -5,6 +5,7 @@ import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
 import type { AuthUser } from "../../types/auth";
 import type { CreateAccountInput } from "../schemas/account.schema";
+import { getCustomerOwnedAccount } from "../policies/account.policy";
 
 const MAX_ACCOUNT_NUMBER_ATTEMPTS = 5;
 
@@ -178,4 +179,83 @@ export const createCustomerAccount = async (
   return prisma.$transaction((tx) =>
     createAccountRecord(tx, user.id, input),
   );
+};
+
+const CUSTOMER_ACCOUNT_SELECT = {
+  id: true,
+  userId: true,
+  accountNumber: true,
+  accountType: true,
+  status: true,
+  createdAt: true,
+  updatedAt: true,
+
+  user: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+    },
+  },
+
+  balances: {
+    select: {
+      id: true,
+      currencyCode: true,
+      availableBalance: true,
+      lockedBalance: true,
+      updatedAt: true,
+
+      currency: {
+        select: {
+          code: true,
+          name: true,
+          symbol: true,
+          decimalPlaces: true,
+        },
+      },
+    },
+    orderBy: {
+      currencyCode: "asc" as const,
+    },
+  },
+} as const;
+
+export const getCustomerAccounts = async (
+  userId: string,
+) => {
+  return prisma.account.findMany({
+    where: {
+      userId,
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+    select: CUSTOMER_ACCOUNT_SELECT,
+  });
+};
+
+export const getCustomerAccountById = async (
+  accountId: string,
+  userId: string,
+) => {
+  // Reuse the existing ownership policy.
+  await getCustomerOwnedAccount(accountId, userId);
+
+  const account = await prisma.account.findUnique({
+    where: {
+      id: accountId,
+    },
+    select: CUSTOMER_ACCOUNT_SELECT,
+  });
+
+  if (!account) {
+    throw new AppError(
+      "Account not found",
+      404,
+      ErrorCode.RESOURCE_NOT_FOUND,
+    );
+  }
+
+  return account;
 };
