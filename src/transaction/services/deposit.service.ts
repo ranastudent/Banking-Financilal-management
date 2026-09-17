@@ -5,6 +5,7 @@ import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
 import type { DepositInput } from "../../account/schemas/deposit.schema";
 import type { AuthUser } from "../../types/auth";
+import { randomUUID } from "crypto";
 
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -46,15 +47,33 @@ const lockDepositAccount = async (
   return account;
 };
 
+const createDepositTransaction = async (
+  tx: Prisma.TransactionClient,
+  accountId: string,
+  amount: Prisma.Decimal,
+  currencyCode: string,
+) => {
+  return tx.transaction.create({
+    data: {
+      reference: `DEP-${randomUUID()}`,
+      type: "DEPOSIT",
+      status: "PENDING",
+      amount,
+      currencyCode,
+      provider: "INTERNAL",
+      destinationAccountId: accountId,
+      metadata: {
+        operation: "ACCOUNT_DEPOSIT",
+      },
+    },
+  });
+};
+
 export const prepareDeposit = async (
   user: AuthUser,
   accountId: string,
   input: DepositInput,
 ) => {
-  /*
-   * Validate account ID format before starting the database
-   * transaction.
-   */
   if (!UUID_REGEX.test(accountId)) {
     throw new AppError(
       "Invalid account ID",
@@ -64,23 +83,11 @@ export const prepareDeposit = async (
   }
 
   return prisma.$transaction(async (tx) => {
-    /*
-     * Lock the account row.
-     *
-     * The lock remains active until this database transaction
-     * commits or rolls back.
-     */
     const account = await lockDepositAccount(
       tx,
       accountId,
     );
 
-    /*
-     * Defense-in-depth authorization.
-     *
-     * Route-level RBAC allows CUSTOMER and ADMIN, but the
-     * financial service must enforce the same rule itself.
-     */
     if (
       user.role === "CUSTOMER" &&
       account.user_id !== user.id
@@ -103,9 +110,6 @@ export const prepareDeposit = async (
       );
     }
 
-    /*
-     * Deposits are allowed only on ACTIVE accounts.
-     */
     if (account.status !== "ACTIVE") {
       throw new AppError(
         "Deposits are not allowed for inactive accounts",
@@ -114,10 +118,6 @@ export const prepareDeposit = async (
       );
     }
 
-    /*
-     * Validate the requested currency inside the same
-     * database transaction.
-     */
     const currency = await tx.currency.findUnique({
       where: {
         code: input.currency,
@@ -147,15 +147,18 @@ export const prepareDeposit = async (
       );
     }
 
-    /*
-     * 12.3 / 12.4 only:
-     *
-     * The account has been locked and all financial preconditions
-     * have been checked.
-     *
-     * No balance, transaction, ledger, or audit record is created
-     * yet. Those will be added in the following phases.
-     */
+    const amount = new Prisma.Decimal(
+      input.amount,
+    );
+
+    const transaction =
+      await createDepositTransaction(
+        tx,
+        account.id,
+        amount,
+        currency.code,
+      );
+
     return {
       account: {
         id: account.id,
@@ -165,7 +168,18 @@ export const prepareDeposit = async (
         status: account.status,
       },
       currency,
-      amount: new Prisma.Decimal(input.amount),
+      amount,
+      transaction: {
+        id: transaction.id,
+        reference: transaction.reference,
+        type: transaction.type,
+        status: transaction.status,
+        amount: transaction.amount.toString(),
+        currencyCode: transaction.currencyCode,
+        provider: transaction.provider,
+        destinationAccountId:
+          transaction.destinationAccountId,
+      },
     };
   });
 };
