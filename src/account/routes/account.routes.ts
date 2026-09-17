@@ -14,7 +14,7 @@ import {
   getAccount,
 } from "../controllers/account.controller";
 
-import { authorizeDeposit } from "../../transaction/controllers/deposit.controller";
+import {  processDeposit } from "../../transaction/controllers/deposit.controller";
 
 import {
   createAccountSchema,
@@ -66,7 +66,7 @@ router.post(
   validate({
     body: depositSchema,
   }),
-  authorizeDeposit,
+  processDeposit,
 );
 
 export default router;
