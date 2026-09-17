@@ -138,6 +138,39 @@ const updateDepositBalance = async (
   };
 };
 
+const createDepositLedgerEntry = async (
+  tx: Prisma.TransactionClient,
+  transactionId: string,
+  accountId: string,
+  currencyCode: string,
+  amount: Prisma.Decimal,
+  balanceBefore: Prisma.Decimal,
+  balanceAfter: Prisma.Decimal,
+) => {
+  return tx.ledgerEntry.create({
+    data: {
+      transactionId,
+      accountId,
+      currencyCode,
+      entryType: "CREDIT",
+      amount,
+      balanceBefore,
+      balanceAfter,
+    },
+    select: {
+      id: true,
+      transactionId: true,
+      accountId: true,
+      currencyCode: true,
+      entryType: true,
+      amount: true,
+      balanceBefore: true,
+      balanceAfter: true,
+      createdAt: true,
+    },
+  });
+};
+
 export const prepareDeposit = async (
   user: AuthUser,
   accountId: string,
@@ -236,6 +269,16 @@ export const prepareDeposit = async (
         amount,
       );
 
+    const ledgerEntry = await createDepositLedgerEntry(
+      tx,
+      transaction.id,
+      account.id,
+      currency.code,
+      amount,
+      balance.balanceBefore,
+      balance.balanceAfter,
+    );
+
      return {
       account: {
         id: account.id,
@@ -253,6 +296,18 @@ export const prepareDeposit = async (
         balanceBefore: balance.balanceBefore.toString(),
         balanceAfter: balance.balanceAfter.toString(),
         lockedBalance: balance.lockedBalance.toString(),
+      },
+
+      ledgerEntry: {
+        id: ledgerEntry.id,
+        transactionId: ledgerEntry.transactionId,
+        accountId: ledgerEntry.accountId,
+        currencyCode: ledgerEntry.currencyCode,
+        entryType: ledgerEntry.entryType,
+        amount: ledgerEntry.amount.toString(),
+        balanceBefore: ledgerEntry.balanceBefore.toString(),
+        balanceAfter: ledgerEntry.balanceAfter.toString(),
+        createdAt: ledgerEntry.createdAt,
       },
 
       transaction: {

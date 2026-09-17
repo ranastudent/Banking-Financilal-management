@@ -100,6 +100,7 @@ export const processDeposit = async (
       currency: result.currency.code,
       amount: result.amount.toString(),
       balance: result.balance,
+      ledgerEntry: result.ledgerEntry,
       transcation: result.transaction,
       userId: req.user.id,
       userRole: req.user.role,
