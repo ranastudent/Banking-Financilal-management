@@ -69,6 +69,75 @@ const createDepositTransaction = async (
   });
 };
 
+const updateDepositBalance = async (
+  tx: Prisma.TransactionClient,
+  accountId: string,
+  currencyCode: string,
+  amount: Prisma.Decimal,
+) => {
+  const existingBalance = await tx.accountBalance.findUnique({
+    where: {
+      accountId_currencyCode: {
+        accountId,
+        currencyCode,
+      },
+    },
+    select: {
+      id: true,
+      availableBalance: true,
+      lockedBalance: true,
+    },
+  });
+
+  if (!existingBalance) {
+    const createdBalance = await tx.accountBalance.create({
+      data: {
+        accountId,
+        currencyCode,
+        availableBalance: amount,
+        lockedBalance: new Prisma.Decimal(0),
+      },
+      select: {
+        id: true,
+        availableBalance: true,
+        lockedBalance: true,
+      },
+    });
+
+    return {
+      id: createdBalance.id,
+      balanceBefore: new Prisma.Decimal(0),
+      balanceAfter: createdBalance.availableBalance,
+      lockedBalance: createdBalance.lockedBalance,
+      currencyCode,
+    };
+  }
+
+  const updatedBalance = await tx.accountBalance.update({
+    where: {
+      id: existingBalance.id,
+    },
+    data: {
+      availableBalance: {
+        increment: amount,
+      },
+    },
+    select: {
+      id: true,
+      availableBalance: true,
+      lockedBalance: true,
+    },
+  });
+
+  return {
+    id: updatedBalance.id,
+    balanceBefore: existingBalance.availableBalance,
+    balanceAfter: updatedBalance.availableBalance,
+    lockedBalance: updatedBalance.lockedBalance,
+    currencyCode,
+  };
+};
+
 export const prepareDeposit = async (
   user: AuthUser,
   accountId: string,
@@ -159,7 +228,15 @@ export const prepareDeposit = async (
         currency.code,
       );
 
-    return {
+    const balance    = 
+      await updateDepositBalance(
+        tx,
+        account.id,
+        currency.code,
+        amount,
+      );
+
+     return {
       account: {
         id: account.id,
         userId: account.user_id,
@@ -169,6 +246,15 @@ export const prepareDeposit = async (
       },
       currency,
       amount,
+
+      balance: {
+        id: balance.id,
+        currencyCode: balance.currencyCode,
+        balanceBefore: balance.balanceBefore.toString(),
+        balanceAfter: balance.balanceAfter.toString(),
+        lockedBalance: balance.lockedBalance.toString(),
+      },
+
       transaction: {
         id: transaction.id,
         reference: transaction.reference,
@@ -177,8 +263,7 @@ export const prepareDeposit = async (
         amount: transaction.amount.toString(),
         currencyCode: transaction.currencyCode,
         provider: transaction.provider,
-        destinationAccountId:
-          transaction.destinationAccountId,
+        destinationAccountId: transaction.destinationAccountId,
       },
     };
   });
