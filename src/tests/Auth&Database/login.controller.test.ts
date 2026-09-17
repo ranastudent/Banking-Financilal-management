@@ -1,7 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
 import request from "supertest";
+import {
+  afterEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
-vi.mock("../auth/services/login.service", () => ({
+vi.mock("../../auth/services/login.service", () => ({
   loginUser: vi.fn(),
 }));
 
@@ -9,6 +15,10 @@ import app from "../../app";
 import { loginUser } from "../../auth/services/login.service";
 
 describe("Login Controller", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("should return login result successfully", async () => {
     vi.mocked(loginUser).mockResolvedValue({
       user: {
@@ -29,6 +39,7 @@ describe("Login Controller", () => {
       });
 
     expect(response.status).toBe(200);
+
     expect(response.body.success).toBe(true);
 
     expect(response.body.data).toEqual({

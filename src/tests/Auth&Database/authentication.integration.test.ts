@@ -21,21 +21,50 @@ describe("Authentication Integration", () => {
   const password = "SecurePassword123!";
 
   beforeEach(async () => {
-    email = `auth-flow-${Date.now()}-${Math.random()
-      .toString(36)
-      .slice(2, 8)}@example.com`;
-
-    await prisma.refreshToken.deleteMany();
-    await prisma.emailVerificationOtp.deleteMany();
-    await prisma.user.deleteMany();
+  email = `auth-flow-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}@example.com`;
   });
 
   afterEach(async () => {
-    vi.restoreAllMocks();
+  vi.restoreAllMocks();
 
-    await prisma.refreshToken.deleteMany();
-    await prisma.emailVerificationOtp.deleteMany();
-    await prisma.user.deleteMany();
+  const user = await prisma.user.findUnique({
+    where: {
+      email,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!user) {
+    return;
+  }
+
+  await prisma.refreshToken.deleteMany({
+    where: {
+      userId: user.id,
+    },
+  });
+
+  await prisma.emailVerificationOtp.deleteMany({
+    where: {
+      userId: user.id,
+    },
+  });
+
+  await prisma.auditLog.deleteMany({
+    where: {
+      userId: user.id,
+    },
+  });
+
+  await prisma.user.delete({
+    where: {
+      id: user.id,
+    },
+  });
   });
 
   // ============================================================

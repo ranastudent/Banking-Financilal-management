@@ -14,17 +14,14 @@ import { hashPassword } from "../../auth/utils/password";
 describe("Authenticated User", () => {
   const password = "SecurePassword123!";
 
-  let email: string;
-  let userId: string;
+  let email = "";
+  let userId = "";
 
   beforeEach(async () => {
-    email = `authenticated-user-${Date.now()}-${Math.random()
-      .toString(36)
-      .slice(2, 8)}@example.com`;
-
-    await prisma.refreshToken.deleteMany();
-    await prisma.emailVerificationOtp.deleteMany();
-    await prisma.user.deleteMany();
+    email =
+      `authenticated-user-${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}@example.com`;
 
     const passwordHash = await hashPassword(password);
 
@@ -43,9 +40,36 @@ describe("Authenticated User", () => {
   });
 
   afterEach(async () => {
-    await prisma.refreshToken.deleteMany();
-    await prisma.emailVerificationOtp.deleteMany();
-    await prisma.user.deleteMany();
+    if (!userId) {
+      return;
+    }
+
+    await prisma.refreshToken.deleteMany({
+      where: {
+        userId,
+      },
+    });
+
+    await prisma.emailVerificationOtp.deleteMany({
+      where: {
+        userId,
+      },
+    });
+
+    await prisma.auditLog.deleteMany({
+      where: {
+        userId,
+      },
+    });
+
+    await prisma.user.delete({
+      where: {
+        id: userId,
+      },
+    });
+
+    userId = "";
+    email = "";
   });
 
   // ============================================================
@@ -167,7 +191,9 @@ describe("Authenticated User", () => {
       );
 
     expect(meResponse.status).toBe(200);
-    expect(meResponse.body.data.role).toBe("CUSTOMER");
+    expect(meResponse.body.data.role).toBe(
+      "CUSTOMER",
+    );
   });
 
   // ============================================================
@@ -195,7 +221,9 @@ describe("Authenticated User", () => {
       );
 
     expect(meResponse.status).toBe(200);
-    expect(meResponse.body.data.status).toBe("ACTIVE");
+    expect(meResponse.body.data.status).toBe(
+      "ACTIVE",
+    );
   });
 
   // ============================================================
@@ -227,9 +255,15 @@ describe("Authenticated User", () => {
     const user = meResponse.body.data;
 
     expect(user).not.toHaveProperty("password");
-    expect(user).not.toHaveProperty("passwordHash");
-    expect(user).not.toHaveProperty("refreshToken");
-    expect(user).not.toHaveProperty("accessToken");
+    expect(user).not.toHaveProperty(
+      "passwordHash",
+    );
+    expect(user).not.toHaveProperty(
+      "refreshToken",
+    );
+    expect(user).not.toHaveProperty(
+      "accessToken",
+    );
   });
 
   // ============================================================
@@ -280,7 +314,9 @@ describe("Authenticated User", () => {
 
     expect(meResponse.body.data.id).toBe(userId);
     expect(meResponse.body.data.email).toBe(email);
-    expect(meResponse.body.data.role).toBe("CUSTOMER");
+    expect(meResponse.body.data.role).toBe(
+      "CUSTOMER",
+    );
 
     expect(meResponse.body.data.id).not.toBe(
       fakeUserId,
@@ -321,7 +357,10 @@ describe("Authenticated User", () => {
 
     expect(meResponse.status).toBe(200);
 
-    expect(meResponse.body.requestId).toBeDefined();
+    expect(
+      meResponse.body.requestId,
+    ).toBeDefined();
+
     expect(
       typeof meResponse.body.requestId,
     ).toBe("string");

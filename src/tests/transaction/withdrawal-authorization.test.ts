@@ -1,5 +1,11 @@
 import request from "supertest";
-import { beforeEach, describe, expect, it } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
 import jwt from "jsonwebtoken";
 
 import app from "../../app";
@@ -8,31 +14,93 @@ import { env } from "../../config/env";
 import { generateAccessToken } from "../../auth/utils/jwt";
 
 describe("Withdrawal Authorization", () => {
-  beforeEach(async () => {
-    await prisma.refreshToken.deleteMany();
-    await prisma.emailVerificationOtp.deleteMany();
-    await prisma.account.deleteMany();
-    await prisma.user.deleteMany();
+  const createdUserIds: string[] = [];
+  const createdAccountIds: string[] = [];
+
+  beforeEach(() => {
+    createdUserIds.length = 0;
+    createdAccountIds.length = 0;
+  });
+
+  afterEach(async () => {
+    // Delete account children first, then accounts.
+    if (createdAccountIds.length > 0) {
+      await prisma.accountBalance.deleteMany({
+        where: {
+          accountId: {
+            in: createdAccountIds,
+          },
+        },
+      });
+
+      await prisma.account.deleteMany({
+        where: {
+          id: {
+            in: createdAccountIds,
+          },
+        },
+      });
+
+      createdAccountIds.length = 0;
+    }
+
+    // Delete only users created by this test file.
+    if (createdUserIds.length > 0) {
+      await prisma.refreshToken.deleteMany({
+        where: {
+          userId: {
+            in: createdUserIds,
+          },
+        },
+      });
+
+      await prisma.emailVerificationOtp.deleteMany({
+        where: {
+          userId: {
+            in: createdUserIds,
+          },
+        },
+      });
+
+      await prisma.auditLog.deleteMany({
+        where: {
+          userId: {
+            in: createdUserIds,
+          },
+        },
+      });
+
+      await prisma.user.deleteMany({
+        where: {
+          id: {
+            in: createdUserIds,
+          },
+        },
+      });
+
+      createdUserIds.length = 0;
+    }
   });
 
   const createAccessToken = (
     id: string,
     email: string,
-    role: string,
-  ) =>
-    generateAccessToken({
+    role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR",
+  ) => {
+    return generateAccessToken({
       id,
       email,
       role,
       status: "ACTIVE",
     });
+  };
 
   const createUser = async (
     name: string,
     email: string,
     role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR",
   ) => {
-    return prisma.user.create({
+    const user = await prisma.user.create({
       data: {
         name,
         email,
@@ -42,10 +110,14 @@ describe("Withdrawal Authorization", () => {
         emailVerifiedAt: new Date(),
       },
     });
+
+    createdUserIds.push(user.id);
+
+    return user;
   };
 
   const createAccount = async (userId: string) => {
-    return prisma.account.create({
+    const account = await prisma.account.create({
       data: {
         userId,
         accountNumber: `ACC-${Date.now()}-${Math.random()
@@ -55,12 +127,16 @@ describe("Withdrawal Authorization", () => {
         status: "ACTIVE",
       },
     });
+
+    createdAccountIds.push(account.id);
+
+    return account;
   };
 
   it("should allow CUSTOMER to withdraw from their own account", async () => {
     const customer = await createUser(
       "Customer One",
-      "customer-one@example.com",
+      `customer-one-${Date.now()}-${Math.random()}@example.com`,
       "CUSTOMER",
     );
 
@@ -74,25 +150,34 @@ describe("Withdrawal Authorization", () => {
 
     const response = await request(app)
       .post(`/api/v1/transactions/withdrawal/${account.id}`)
-      .set("Authorization", `Bearer ${accessToken}`);
+      .set(
+        "Authorization",
+        `Bearer ${accessToken}`,
+      );
 
     expect(response.status).toBe(200);
     expect(response.body.success).toBe(true);
-    expect(response.body.data.accountId).toBe(account.id);
-    expect(response.body.data.userId).toBe(customer.id);
-    expect(response.body.data.userRole).toBe("CUSTOMER");
+    expect(response.body.data.accountId).toBe(
+      account.id,
+    );
+    expect(response.body.data.userId).toBe(
+      customer.id,
+    );
+    expect(response.body.data.userRole).toBe(
+      "CUSTOMER",
+    );
   });
 
   it("should reject CUSTOMER from withdrawing from another customer's account", async () => {
     const customerA = await createUser(
       "Customer A",
-      "customer-a@example.com",
+      `customer-a-${Date.now()}-${Math.random()}@example.com`,
       "CUSTOMER",
     );
 
     const customerB = await createUser(
       "Customer B",
-      "customer-b@example.com",
+      `customer-b-${Date.now()}-${Math.random()}@example.com`,
       "CUSTOMER",
     );
 
@@ -106,27 +191,34 @@ describe("Withdrawal Authorization", () => {
 
     const response = await request(app)
       .post(`/api/v1/transactions/withdrawal/${accountB.id}`)
-      .set("Authorization", `Bearer ${accessToken}`);
+      .set(
+        "Authorization",
+        `Bearer ${accessToken}`,
+      );
 
     expect(response.status).toBe(403);
     expect(response.body.success).toBe(false);
-    expect(response.body.error.code).toBe("FORBIDDEN");
+    expect(response.body.error.code).toBe(
+      "FORBIDDEN",
+    );
   });
 
   it("should allow ADMIN to withdraw from any account", async () => {
     const admin = await createUser(
       "Admin User",
-      "admin@example.com",
+      `admin-${Date.now()}-${Math.random()}@example.com`,
       "ADMIN",
     );
 
     const customer = await createUser(
       "Customer User",
-      "customer@example.com",
+      `customer-${Date.now()}-${Math.random()}@example.com`,
       "CUSTOMER",
     );
 
-    const customerAccount = await createAccount(customer.id);
+    const customerAccount = await createAccount(
+      customer.id,
+    );
 
     const accessToken = createAccessToken(
       admin.id,
@@ -135,26 +227,35 @@ describe("Withdrawal Authorization", () => {
     );
 
     const response = await request(app)
-      .post(`/api/v1/transactions/withdrawal/${customerAccount.id}`)
-      .set("Authorization", `Bearer ${accessToken}`);
+      .post(
+        `/api/v1/transactions/withdrawal/${customerAccount.id}`,
+      )
+      .set(
+        "Authorization",
+        `Bearer ${accessToken}`,
+      );
 
     expect(response.status).toBe(200);
     expect(response.body.success).toBe(true);
-    expect(response.body.data.accountId).toBe(customerAccount.id);
-    expect(response.body.data.userId).toBe(admin.id);
+    expect(response.body.data.accountId).toBe(
+      customerAccount.id,
+    );
+    expect(response.body.data.userId).toBe(
+      admin.id,
+    );
     expect(response.body.data.userRole).toBe("ADMIN");
   });
 
   it("should reject SUPPORT from performing a withdrawal", async () => {
     const support = await createUser(
       "Support User",
-      "support@example.com",
+      `support-${Date.now()}-${Math.random()}@example.com`,
       "SUPPORT",
     );
 
     const customer = await createUser(
       "Customer User",
-      "customer@example.com",
+      `customer-${Date.now()}-${Math.random()}@example.com`,
       "CUSTOMER",
     );
 
@@ -167,24 +268,31 @@ describe("Withdrawal Authorization", () => {
     );
 
     const response = await request(app)
-      .post(`/api/v1/transactions/withdrawal/${account.id}`)
-      .set("Authorization", `Bearer ${accessToken}`);
+      .post(
+        `/api/v1/transactions/withdrawal/${account.id}`,
+      )
+      .set(
+        "Authorization",
+        `Bearer ${accessToken}`,
+      );
 
     expect(response.status).toBe(403);
     expect(response.body.success).toBe(false);
-    expect(response.body.error.code).toBe("FORBIDDEN");
+    expect(response.body.error.code).toBe(
+      "FORBIDDEN",
+    );
   });
 
   it("should reject AUDITOR from performing a withdrawal", async () => {
     const auditor = await createUser(
       "Auditor User",
-      "auditor@example.com",
+      `auditor-${Date.now()}-${Math.random()}@example.com`,
       "AUDITOR",
     );
 
     const customer = await createUser(
       "Customer User",
-      "customer@example.com",
+      `customer-${Date.now()}-${Math.random()}@example.com`,
       "CUSTOMER",
     );
 
@@ -197,18 +305,25 @@ describe("Withdrawal Authorization", () => {
     );
 
     const response = await request(app)
-      .post(`/api/v1/transactions/withdrawal/${account.id}`)
-      .set("Authorization", `Bearer ${accessToken}`);
+      .post(
+        `/api/v1/transactions/withdrawal/${account.id}`,
+      )
+      .set(
+        "Authorization",
+        `Bearer ${accessToken}`,
+      );
 
     expect(response.status).toBe(403);
     expect(response.body.success).toBe(false);
-    expect(response.body.error.code).toBe("FORBIDDEN");
+    expect(response.body.error.code).toBe(
+      "FORBIDDEN",
+    );
   });
 
   it("should reject withdrawal when the account does not exist", async () => {
     const customer = await createUser(
       "Customer User",
-      "withdrawal-not-found@example.com",
+      `withdrawal-not-found-${Date.now()}-${Math.random()}@example.com`,
       "CUSTOMER",
     );
 
@@ -222,11 +337,16 @@ describe("Withdrawal Authorization", () => {
       .post(
         "/api/v1/transactions/withdrawal/00000000-0000-0000-0000-000000000000",
       )
-      .set("Authorization", `Bearer ${accessToken}`);
+      .set(
+        "Authorization",
+        `Bearer ${accessToken}`,
+      );
 
     expect(response.status).toBe(404);
     expect(response.body.success).toBe(false);
-    expect(response.body.error.code).toBe("RESOURCE_NOT_FOUND");
+    expect(response.body.error.code).toBe(
+      "RESOURCE_NOT_FOUND",
+    );
   });
 
   it("should reject withdrawal when authentication is missing", async () => {
@@ -236,7 +356,9 @@ describe("Withdrawal Authorization", () => {
 
     expect(response.status).toBe(401);
     expect(response.body.success).toBe(false);
-    expect(response.body.error.code).toBe("UNAUTHORIZED");
+    expect(response.body.error.code).toBe(
+      "UNAUTHORIZED",
+    );
   });
 
   it("should reject a refresh token from the withdrawal route", async () => {
@@ -256,17 +378,22 @@ describe("Withdrawal Authorization", () => {
       .post(
         "/api/v1/transactions/withdrawal/00000000-0000-0000-0000-000000000000",
       )
-      .set("Authorization", `Bearer ${refreshToken}`);
+      .set(
+        "Authorization",
+        `Bearer ${refreshToken}`,
+      );
 
     expect(response.status).toBe(401);
     expect(response.body.success).toBe(false);
-    expect(response.body.error.code).toBe("UNAUTHORIZED");
+    expect(response.body.error.code).toBe(
+      "UNAUTHORIZED",
+    );
   });
 
   it("should not modify account balance during authorization", async () => {
     const customer = await createUser(
       "Customer Balance",
-      "customer-withdrawal-balance@example.com",
+      `customer-withdrawal-balance-${Date.now()}-${Math.random()}@example.com`,
       "CUSTOMER",
     );
 
@@ -279,22 +406,29 @@ describe("Withdrawal Authorization", () => {
     );
 
     const response = await request(app)
-      .post(`/api/v1/transactions/withdrawal/${account.id}`)
-      .set("Authorization", `Bearer ${accessToken}`);
+      .post(
+        `/api/v1/transactions/withdrawal/${account.id}`,
+      )
+      .set(
+        "Authorization",
+        `Bearer ${accessToken}`,
+      );
 
     expect(response.status).toBe(200);
 
-    const accountBalanceCount = await prisma.accountBalance.count({
-      where: {
-        accountId: account.id,
-      },
-    });
+    const accountBalanceCount =
+      await prisma.accountBalance.count({
+        where: {
+          accountId: account.id,
+        },
+      });
 
-    const transactionCount = await prisma.transaction.count({
-      where: {
-        sourceAccountId: account.id,
-      },
-    });
+    const transactionCount =
+      await prisma.transaction.count({
+        where: {
+          sourceAccountId: account.id,
+        },
+      });
 
     expect(accountBalanceCount).toBe(0);
     expect(transactionCount).toBe(0);
@@ -303,7 +437,7 @@ describe("Withdrawal Authorization", () => {
   it("should return requestId for a successful authorization", async () => {
     const customer = await createUser(
       "Customer Request ID",
-      "customer-withdrawal-request-id@example.com",
+      `customer-withdrawal-request-id-${Date.now()}-${Math.random()}@example.com`,
       "CUSTOMER",
     );
 
@@ -316,10 +450,17 @@ describe("Withdrawal Authorization", () => {
     );
 
     const response = await request(app)
-      .post(`/api/v1/transactions/withdrawal/${account.id}`)
-      .set("Authorization", `Bearer ${accessToken}`);
+      .post(
+        `/api/v1/transactions/withdrawal/${account.id}`,
+      )
+      .set(
+        "Authorization",
+        `Bearer ${accessToken}`,
+      );
 
     expect(response.status).toBe(200);
-    expect(response.body.requestId).toEqual(expect.any(String));
+    expect(response.body.requestId).toEqual(
+      expect.any(String),
+    );
   });
 });

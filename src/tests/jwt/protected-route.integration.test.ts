@@ -16,17 +16,14 @@ import { hashPassword } from "../../auth/utils/password";
 describe("Protected Route Integration", () => {
   const password = "SecurePassword123!";
 
-  let email: string;
-  let userId: string;
+  let email = "";
+  let userId = "";
 
   beforeEach(async () => {
-    email = `protected-route-${Date.now()}-${Math.random()
-      .toString(36)
-      .slice(2, 8)}@example.com`;
-
-    await prisma.refreshToken.deleteMany();
-    await prisma.emailVerificationOtp.deleteMany();
-    await prisma.user.deleteMany();
+    email =
+      `protected-route-${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}@example.com`;
 
     const passwordHash = await hashPassword(password);
 
@@ -45,9 +42,36 @@ describe("Protected Route Integration", () => {
   });
 
   afterEach(async () => {
-    await prisma.refreshToken.deleteMany();
-    await prisma.emailVerificationOtp.deleteMany();
-    await prisma.user.deleteMany();
+    if (!userId) {
+      return;
+    }
+
+    await prisma.refreshToken.deleteMany({
+      where: {
+        userId,
+      },
+    });
+
+    await prisma.emailVerificationOtp.deleteMany({
+      where: {
+        userId,
+      },
+    });
+
+    await prisma.auditLog.deleteMany({
+      where: {
+        userId,
+      },
+    });
+
+    await prisma.user.delete({
+      where: {
+        id: userId,
+      },
+    });
+
+    userId = "";
+    email = "";
   });
 
   // ============================================================
@@ -132,6 +156,7 @@ describe("Protected Route Integration", () => {
 
     expect(response.status).toBe(401);
     expect(response.body.success).toBe(false);
+
     expect(response.body.error.code).toBe(
       "UNAUTHORIZED",
     );
@@ -165,6 +190,7 @@ describe("Protected Route Integration", () => {
 
     expect(response.status).toBe(401);
     expect(response.body.success).toBe(false);
+
     expect(response.body.error.code).toBe(
       "UNAUTHORIZED",
     );
@@ -198,6 +224,7 @@ describe("Protected Route Integration", () => {
 
     expect(response.status).toBe(401);
     expect(response.body.success).toBe(false);
+
     expect(response.body.error.code).toBe(
       "UNAUTHORIZED",
     );
@@ -217,6 +244,7 @@ describe("Protected Route Integration", () => {
 
     expect(response.status).toBe(401);
     expect(response.body.success).toBe(false);
+
     expect(response.body.error.code).toBe(
       "UNAUTHORIZED",
     );
@@ -263,9 +291,15 @@ describe("Protected Route Integration", () => {
     const user = response.body.data;
 
     expect(user).not.toHaveProperty("password");
-    expect(user).not.toHaveProperty("passwordHash");
-    expect(user).not.toHaveProperty("accessToken");
-    expect(user).not.toHaveProperty("refreshToken");
+    expect(user).not.toHaveProperty(
+      "passwordHash",
+    );
+    expect(user).not.toHaveProperty(
+      "accessToken",
+    );
+    expect(user).not.toHaveProperty(
+      "refreshToken",
+    );
   });
 
   // ============================================================
@@ -285,7 +319,10 @@ describe("Protected Route Integration", () => {
 
     expect(response.status).toBe(200);
 
-    expect(response.body.requestId).toBeDefined();
+    expect(
+      response.body.requestId,
+    ).toBeDefined();
+
     expect(
       typeof response.body.requestId,
     ).toBe("string");

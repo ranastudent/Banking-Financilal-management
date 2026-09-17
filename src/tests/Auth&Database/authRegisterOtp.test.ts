@@ -1,7 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import request from "supertest";
 
-vi.mock("../auth/services/otp.service", () => ({
+vi.mock("../../auth/services/otp.service", () => ({
   sendRegistrationOtp: vi.fn(),
 }));
 
@@ -10,12 +17,48 @@ import { prisma } from "../../config/prisma";
 import { sendRegistrationOtp } from "../../auth/services/otp.service";
 
 describe("Authentication - Registration OTP Integration", () => {
+  let createdUserId: string | null = null;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    createdUserId = null;
+  });
+
+  afterEach(async () => {
+    if (!createdUserId) {
+      return;
+    }
+
+    await prisma.refreshToken.deleteMany({
+    where: {
+      userId: createdUserId!,
+    },
+    });
+
+  await prisma.emailVerificationOtp.deleteMany({
+    where: {
+      userId: createdUserId!,
+    },
+  });
+
+  await prisma.auditLog.deleteMany({
+    where: {
+      userId: createdUserId!,
+    },
+  });
+
+  await prisma.user.delete({
+    where: {
+      id: createdUserId!,
+    },
+  });
+
+    createdUserId = null;
   });
 
   it("should create an inactive user and send a registration OTP", async () => {
-    const email = `otp-register-${Date.now()}@example.com`;
+    const email =
+      `otp-register-${Date.now()}-${Math.random()}@example.com`;
 
     const response = await request(app)
       .post("/api/v1/auth/register")
@@ -35,16 +78,20 @@ describe("Authentication - Registration OTP Integration", () => {
       emailVerifiedAt: null,
     });
 
+    createdUserId = response.body.data.id;
+
+    expect(createdUserId).toBeTruthy();
+
     expect(sendRegistrationOtp).toHaveBeenCalledTimes(1);
 
     expect(sendRegistrationOtp).toHaveBeenCalledWith(
-      response.body.data.id,
+      createdUserId,
       email,
     );
 
     const user = await prisma.user.findUnique({
       where: {
-        email,
+        id: createdUserId!,
       },
       select: {
         status: true,
@@ -53,7 +100,9 @@ describe("Authentication - Registration OTP Integration", () => {
     });
 
     expect(user).not.toBeNull();
+
     expect(user?.status).toBe("INACTIVE");
+
     expect(user?.emailVerifiedAt).toBeNull();
   });
 });
