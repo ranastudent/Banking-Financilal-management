@@ -17,11 +17,44 @@ type LockedAccountRow = {
   status: string;
 };
 
+const lockDepositAccount = async (
+  tx: Prisma.TransactionClient,
+  accountId: string,
+): Promise<LockedAccountRow> => {
+  const accounts = await tx.$queryRaw<LockedAccountRow[]>`
+    SELECT
+      id,
+      user_id,
+      account_number,
+      account_type,
+      status
+    FROM accounts
+    WHERE id = CAST(${accountId} AS uuid)
+    FOR UPDATE
+  `;
+
+  const account = accounts[0];
+
+  if (!account) {
+    throw new AppError(
+      "Account not found",
+      404,
+      ErrorCode.RESOURCE_NOT_FOUND,
+    );
+  }
+
+  return account;
+};
+
 export const prepareDeposit = async (
   user: AuthUser,
   accountId: string,
   input: DepositInput,
 ) => {
+  /*
+   * Validate account ID format before starting the database
+   * transaction.
+   */
   if (!UUID_REGEX.test(accountId)) {
     throw new AppError(
       "Invalid account ID",
@@ -32,41 +65,21 @@ export const prepareDeposit = async (
 
   return prisma.$transaction(async (tx) => {
     /*
-     * Lock the account row for the duration of the transaction.
+     * Lock the account row.
      *
-     * All future deposit balance mutations will happen inside
-     * this same transaction after this lock is acquired.
-     *
-     * FOR UPDATE prevents concurrent financial operations from
-     * reading and updating the same account simultaneously.
+     * The lock remains active until this database transaction
+     * commits or rolls back.
      */
-    const accounts = await tx.$queryRaw<LockedAccountRow[]>`
-      SELECT
-        id,
-        user_id,
-        account_number,
-        account_type,
-        status
-      FROM accounts
-      WHERE id = CAST(${accountId} AS uuid)
-      FOR UPDATE
-    `;
-
-    const account = accounts[0];
-
-    if (!account) {
-      throw new AppError(
-        "Account not found",
-        404,
-        ErrorCode.RESOURCE_NOT_FOUND,
-      );
-    }
+    const account = await lockDepositAccount(
+      tx,
+      accountId,
+    );
 
     /*
-     * Defense-in-depth ownership check.
+     * Defense-in-depth authorization.
      *
-     * Route-level RBAC already allows only CUSTOMER and ADMIN,
-     * but financial authorization must also be enforced here.
+     * Route-level RBAC allows CUSTOMER and ADMIN, but the
+     * financial service must enforce the same rule itself.
      */
     if (
       user.role === "CUSTOMER" &&
@@ -91,8 +104,7 @@ export const prepareDeposit = async (
     }
 
     /*
-     * Financial operations are not allowed on frozen or closed
-     * accounts.
+     * Deposits are allowed only on ACTIVE accounts.
      */
     if (account.status !== "ACTIVE") {
       throw new AppError(
@@ -103,7 +115,8 @@ export const prepareDeposit = async (
     }
 
     /*
-     * Validate the requested currency inside the same transaction.
+     * Validate the requested currency inside the same
+     * database transaction.
      */
     const currency = await tx.currency.findUnique({
       where: {
@@ -135,9 +148,13 @@ export const prepareDeposit = async (
     }
 
     /*
-     * Return only the information required by the controller.
+     * 12.3 / 12.4 only:
      *
-     * No balance mutation or transaction creation occurs yet.
+     * The account has been locked and all financial preconditions
+     * have been checked.
+     *
+     * No balance, transaction, ledger, or audit record is created
+     * yet. Those will be added in the following phases.
      */
     return {
       account: {

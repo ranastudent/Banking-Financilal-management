@@ -13,10 +13,19 @@ describe("12.3 Deposit Service + DB Transaction", () => {
   const createdUserIds: string[] = [];
   const createdAccountIds: string[] = [];
 
-  beforeEach(() => {
-    createdUserIds.length = 0;
-    createdAccountIds.length = 0;
+ beforeEach(async () => {
+  createdUserIds.length = 0;
+  createdAccountIds.length = 0;
+
+  await prisma.currency.update({
+    where: {
+      code: "BDT",
+    },
+    data: {
+      isActive: true,
+    },
   });
+ });
 
   afterEach(async () => {
     if (createdAccountIds.length > 0) {
@@ -302,47 +311,53 @@ describe("12.3 Deposit Service + DB Transaction", () => {
   });
 
   it("should reject an inactive currency", async () => {
-    const customer = await createUser("CUSTOMER");
-    const account = await createAccount(customer.id);
+  const customer = await createUser("CUSTOMER");
+  const account = await createAccount(customer.id);
 
-    await prisma.currency.update({
+  const testCurrencyCode = "XZZ";
+
+  await prisma.currency.upsert({
+    where: {
+      code: testCurrencyCode,
+    },
+    create: {
+      code: testCurrencyCode,
+      name: "Deposit Test Currency",
+      symbol: "X",
+      decimalPlaces: 2,
+      isActive: false,
+    },
+    update: {
+      isActive: false,
+    },
+  });
+
+  try {
+    await expect(
+      prepareDeposit(
+        {
+          id: customer.id,
+          email: customer.email,
+          role: customer.role,
+          status: customer.status,
+        },
+        account.id,
+        {
+          amount: "1000.00",
+          currency: testCurrencyCode,
+        },
+      ),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: "CONFLICT",
+    });
+  } finally {
+    await prisma.currency.delete({
       where: {
-        code: "BDT",
-      },
-      data: {
-        isActive: false,
+        code: testCurrencyCode,
       },
     });
-
-    try {
-      await expect(
-        prepareDeposit(
-          {
-            id: customer.id,
-            email: customer.email,
-            role: customer.role,
-            status: customer.status,
-          },
-          account.id,
-          {
-            amount: "1000.00",
-            currency: "BDT",
-          },
-        ),
-      ).rejects.toMatchObject({
-        statusCode: 409,
-        code: "CONFLICT",
-      });
-    } finally {
-      await prisma.currency.update({
-        where: {
-          code: "BDT",
-        },
-        data: {
-          isActive: true,
-        },
-      });
-    }
+  }
   });
 
   it("should reject an invalid account ID before starting the database transaction", async () => {
