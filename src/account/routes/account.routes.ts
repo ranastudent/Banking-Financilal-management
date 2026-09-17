@@ -14,10 +14,14 @@ import {
   getAccount,
 } from "../controllers/account.controller";
 
+import { authorizeDeposit } from "../../transaction/controllers/deposit.controller";
+
 import {
   createAccountSchema,
   updateAccountStatusSchema,
 } from "../schemas/account.schema";
+
+import { depositSchema } from "../schemas/deposit.schema";
 
 const router = Router();
 
@@ -53,6 +57,16 @@ router.patch(
     body: updateAccountStatusSchema,
   }),
   updateAccountStatus,
+);
+
+router.post(
+  "/:accountId/deposits",
+  authenticate,
+  authorize("CUSTOMER", "ADMIN"),
+  validate({
+    body: depositSchema,
+  }),
+  authorizeDeposit,
 );
 
 export default router;
