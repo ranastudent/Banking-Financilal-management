@@ -388,4 +388,33 @@ describe("11.1 Account Creation", () => {
       "VALIDATION_ERROR",
     );
   });
+
+  it("should reject all client-supplied balance fields", async () => {
+  const customer = await createTestUser(
+    "CUSTOMER",
+    "ACTIVE",
+  );
+
+  const accessToken = createAccessToken(customer);
+
+  const response = await request(app)
+    .post("/api/v1/accounts")
+    .set(
+      "Authorization",
+      `Bearer ${accessToken}`,
+    )
+    .send({
+      accountType: "SAVINGS",
+      currency: "BDT",
+      balance: 999999,
+      availableBalance: 999999,
+      lockedBalance: 999999,
+    });
+
+  expect(response.status).toBe(400);
+  expect(response.body.success).toBe(false);
+  expect(response.body.error.code).toBe(
+    "VALIDATION_ERROR",
+  );
+});
 });

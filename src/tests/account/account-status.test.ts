@@ -19,6 +19,9 @@ describe("Account Status Management", () => {
   let accountId: string;
   let otherAccountId: string;
 
+  const createdAccountIds: string[] = [];
+  const createdUserIds: string[] = [];
+
   beforeEach(async () => {
     const customer = await prisma.user.create({
       data: {
@@ -87,54 +90,59 @@ describe("Account Status Management", () => {
   });
 
   afterAll(async () => {
+  if (createdAccountIds.length > 0) {
     await prisma.auditLog.deleteMany({
       where: {
-        OR: [
-          { userId: customerId },
-          { userId: otherCustomerId },
-          { entityId: accountId },
-          { entityId: otherAccountId },
-        ],
+        entityId: {
+          in: createdAccountIds,
+        },
       },
     });
 
     await prisma.accountBalance.deleteMany({
       where: {
-        OR: [
-          { accountId },
-          { accountId: otherAccountId },
-        ],
+        accountId: {
+          in: createdAccountIds,
+        },
       },
     });
 
     await prisma.account.deleteMany({
       where: {
-        OR: [
-          { id: accountId },
-          { id: otherAccountId },
-        ],
+        id: {
+          in: createdAccountIds,
+        },
+      },
+    });
+  }
+
+  if (createdUserIds.length > 0) {
+    await prisma.refreshToken.deleteMany({
+      where: {
+        userId: {
+          in: createdUserIds,
+        },
       },
     });
 
-    await prisma.refreshToken.deleteMany({
+    await prisma.auditLog.deleteMany({
       where: {
-        OR: [
-          { userId: customerId },
-          { userId: otherCustomerId },
-        ],
+        userId: {
+          in: createdUserIds,
+        },
       },
     });
 
     await prisma.user.deleteMany({
       where: {
-        OR: [
-          { id: customerId },
-          { id: otherCustomerId },
-        ],
+        id: {
+          in: createdUserIds,
+        },
       },
     });
+  }
 
-    await prisma.$disconnect();
+  await prisma.$disconnect();
   });
 
   it("should change ACTIVE account to FROZEN", async () => {
@@ -280,17 +288,19 @@ describe("Account Status Management", () => {
     expect(response.body.success).toBe(false);
   });
 
-  it("should reject unsupported fields", async () => {
-    const response = await request(app)
-      .patch(`/api/v1/accounts/${accountId}/status`)
-      .set("Authorization", `Bearer ${customerToken}`)
-      .send({
-        status: "FROZEN",
-        balance: 999999,
-      });
+  it("should reject all client-supplied balance fields", async () => {
+  const response = await request(app)
+    .patch(`/api/v1/accounts/${accountId}/status`)
+    .set("Authorization", `Bearer ${customerToken}`)
+    .send({
+      status: "FROZEN",
+      balance: 999999,
+      availableBalance: 999999,
+      lockedBalance: 999999,
+    });
 
-    expect(response.status).toBe(400);
-    expect(response.body.success).toBe(false);
+  expect(response.status).toBe(400);
+  expect(response.body.success).toBe(false);
   });
 
   it("should not change account balance when status changes", async () => {
