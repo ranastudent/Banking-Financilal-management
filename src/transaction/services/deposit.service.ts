@@ -171,6 +171,49 @@ const createDepositLedgerEntry = async (
   });
 };
 
+const createDepositAuditLog = async (
+  tx: Prisma.TransactionClient,
+  userId: string,
+  userRole: string,
+  accountId: string,
+  accountNumber: string,
+  transactionId: string,
+  transactionReference: string,
+  amount: Prisma.Decimal,
+  currencyCode: string,
+) => {
+  return tx.auditLog.create({
+    data: {
+      userId,
+      action: "DEPOSIT_CREATED",
+      entityType: "TRANSACTION",
+      entityId: transactionId,
+      description: `Deposit transaction ${transactionReference} created for account ${accountNumber}`,
+
+      metadata: {
+        operation: "ACCOUNT_DEPOSIT",
+        transactionId,
+        transactionReference,
+        accountId,
+        accountNumber,
+        amount: amount.toString(),
+        currencyCode,
+        userRole,
+      },
+    },
+    select: {
+      id: true,
+      userId: true,
+      action: true,
+      entityType: true,
+      entityId: true,
+      description: true,
+      metadata: true,
+      createdAt: true,
+    },
+  });
+};
+
 export const prepareDeposit = async (
   user: AuthUser,
   accountId: string,
@@ -277,6 +320,18 @@ export const prepareDeposit = async (
       amount,
       balance.balanceBefore,
       balance.balanceAfter,
+    );
+
+    const auditLog = await createDepositAuditLog(
+      tx,
+      user.id,
+      user.role,
+      account.id,
+      account.account_number,
+      transaction.id,
+      transaction.reference,
+      amount,
+      currency.code,
     );
 
      return {
