@@ -301,3 +301,25 @@ export const completeIdempotencyRecord = async (
     },
   });
 };
+
+export const clearIdempotencyRecord = async (
+  res: Parameters<RequestHandler>[1],
+): Promise<void> => {
+  const recordId = res.locals.idempotencyRecordId as
+    | string
+    | undefined;
+
+  if (!recordId) {
+    return;
+  }
+
+  try {
+    await prisma.idempotencyRecord.delete({
+      where: {
+        id: recordId,
+      },
+    });
+  } catch {
+    // Do not hide the original financial-operation error.
+  }
+};

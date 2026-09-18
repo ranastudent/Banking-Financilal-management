@@ -10,6 +10,27 @@ import { randomUUID } from "crypto";
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+type DepositFailurePoint =
+  | "after-transaction"
+  | "after-balance"
+  | "after-ledger"
+  | "after-audit";
+
+type DepositServiceOptions = {
+  failurePoint?: DepositFailurePoint;
+};
+
+const simulateDepositFailure = (
+  failurePoint: DepositFailurePoint | undefined,
+  currentPoint: DepositFailurePoint,
+): void => {
+  if (failurePoint === currentPoint) {
+    throw new Error(
+      `Simulated deposit failure at ${currentPoint}`,
+    );
+  }
+};
+
 type LockedAccountRow = {
   id: string;
   user_id: string;
@@ -218,6 +239,7 @@ export const prepareDeposit = async (
   user: AuthUser,
   accountId: string,
   input: DepositInput,
+  options:DepositServiceOptions = {},
 ) => {
   if (!UUID_REGEX.test(accountId)) {
     throw new AppError(
@@ -304,6 +326,11 @@ export const prepareDeposit = async (
         currency.code,
       );
 
+    simulateDepositFailure(
+      options.failurePoint,
+      "after-transaction",
+    );
+
     const balance    = 
       await updateDepositBalance(
         tx,
@@ -311,6 +338,11 @@ export const prepareDeposit = async (
         currency.code,
         amount,
       );
+    
+    simulateDepositFailure(
+      options.failurePoint,
+      "after-balance",
+    );
 
     const ledgerEntry = await createDepositLedgerEntry(
       tx,
@@ -320,6 +352,11 @@ export const prepareDeposit = async (
       amount,
       balance.balanceBefore,
       balance.balanceAfter,
+    );
+
+    simulateDepositFailure(
+      options.failurePoint,
+      "after-ledger",
     );
 
     const auditLog = await createDepositAuditLog(
@@ -332,6 +369,11 @@ export const prepareDeposit = async (
       transaction.reference,
       amount,
       currency.code,
+    );
+
+    simulateDepositFailure(
+      options.failurePoint,
+      "after-audit",
     );
 
      return {

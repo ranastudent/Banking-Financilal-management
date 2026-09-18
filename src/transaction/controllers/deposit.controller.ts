@@ -5,7 +5,7 @@ import { ErrorCode } from "../../errors/errorCodes";
 import { getDepositAuthorizedAccount } from "../policies/deposit.policy";
 import { prepareDeposit } from "../services/deposit.service";
 import {
-  completeIdempotencyRecord,
+  completeIdempotencyRecord, clearIdempotencyRecord,
 } from "../../middleware/idempotency.middleware";
 
 export const authorizeDeposit = async (
@@ -77,11 +77,18 @@ export const processDeposit = async (
     );
   }
 
-  const result = await prepareDeposit(
-    req.user,
-    accountId,
-    req.body,
-  );
+  let result;
+
+  try {
+    result = await prepareDeposit(
+      req.user,
+      accountId,
+      req.body,
+    );
+  } catch (error) {
+    await clearIdempotencyRecord(res);
+    throw error;
+  }
 
   const responseData = {
     message: "Deposit transaction created successfully",
