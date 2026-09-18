@@ -4,6 +4,9 @@ import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
 import { getDepositAuthorizedAccount } from "../policies/deposit.policy";
 import { prepareDeposit } from "../services/deposit.service";
+import {
+  completeIdempotencyRecord,
+} from "../../middleware/idempotency.middleware";
 
 export const authorizeDeposit = async (
   req: Request,
@@ -80,31 +83,32 @@ export const processDeposit = async (
     req.body,
   );
 
-  /*
-   * 12.3 only:
-   *
-   * - DB transaction started
-   * - Account row locked
-   * - Ownership checked
-   * - Account status checked
-   * - Currency checked
-   *
-   * No money is changed yet.
-   */
+  const responseData = {
+    message: "Deposit transaction created successfully",
+    accountId: result.account.id,
+    accountNumber: result.account.accountNumber,
+    currency: result.currency.code,
+    amount: result.amount.toString(),
+
+    balance: result.balance,
+
+    ledgerEntry: result.ledgerEntry,
+
+    transaction: result.transaction,
+
+    userId: req.user.id,
+    userRole: req.user.role,
+  };
+
+  await completeIdempotencyRecord(
+    res,
+    200,
+    responseData,
+  );
+
   res.status(200).json({
     success: true,
-    data: {
-      message: "Deposit transaction prepared successfully",
-      accountId: result.account.id,
-      accountNumber: result.account.accountNumber,
-      currency: result.currency.code,
-      amount: result.amount.toString(),
-      balance: result.balance,
-      ledgerEntry: result.ledgerEntry,
-      transcation: result.transaction,
-      userId: req.user.id,
-      userRole: req.user.role,
-    },
+    data: responseData,
     requestId: req.requestId,
   });
 };

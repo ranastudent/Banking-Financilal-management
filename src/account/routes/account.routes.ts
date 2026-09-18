@@ -3,6 +3,7 @@ import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate";
 import { authorize } from "../../middleware/authorize";
 import { validate } from "../../middleware/validate";
+import { requireIdempotencyKey } from "../../middleware/idempotency.middleware";
 
 import {
   createAccount,
@@ -66,6 +67,7 @@ router.post(
   validate({
     body: depositSchema,
   }),
+  requireIdempotencyKey,
   processDeposit,
 );
 
