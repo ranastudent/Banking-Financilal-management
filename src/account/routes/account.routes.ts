@@ -16,13 +16,13 @@ import {
 } from "../controllers/account.controller";
 
 import {  processDeposit } from "../../transaction/controllers/deposit.controller";
+import {withdrawalAuthorizationController,} from "../../transaction/controllers/withdrawal.controller";
 
-import {
-  createAccountSchema,
-  updateAccountStatusSchema,
-} from "../schemas/account.schema";
+import {createAccountSchema,updateAccountStatusSchema,} from "../schemas/account.schema";
 
 import { depositSchema } from "../schemas/deposit.schema";
+
+import { withdrawalSchema } from "../schemas/withdrawal.schema";
 
 const router = Router();
 
@@ -69,6 +69,27 @@ router.post(
   }),
   requireIdempotencyKey,
   processDeposit,
+);
+
+router.post(
+  "/:accountId/deposits",
+  authenticate,
+  authorize("CUSTOMER", "ADMIN"),
+  validate({
+    body: depositSchema,
+  }),
+  requireIdempotencyKey,
+  processDeposit,
+);
+
+router.post(
+  "/:accountId/withdrawals",
+  authenticate,
+  authorize("CUSTOMER", "ADMIN"),
+  validate({
+    body: withdrawalSchema,
+  }),
+  withdrawalAuthorizationController,
 );
 
 export default router;
