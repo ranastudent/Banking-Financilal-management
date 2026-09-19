@@ -149,11 +149,17 @@ describe("Withdrawal Authorization", () => {
     );
 
     const response = await request(app)
-      .post(`/api/v1/transactions/withdrawal/${account.id}`)
+      .post(
+        `/api/v1/accounts/${account.id}/withdrawals`,
+      )
       .set(
         "Authorization",
         `Bearer ${accessToken}`,
-      );
+      )
+      .send({
+        amount: "100.00",
+        currency: "BDT",
+      });
 
     expect(response.status).toBe(200);
     expect(response.body.success).toBe(true);
@@ -269,7 +275,7 @@ describe("Withdrawal Authorization", () => {
 
     const response = await request(app)
       .post(
-        `/api/v1/transactions/withdrawal/${account.id}`,
+        `/api/v1/accounts/${account.id}/withdrawals`,
       )
       .set(
         "Authorization",
@@ -306,7 +312,7 @@ describe("Withdrawal Authorization", () => {
 
     const response = await request(app)
       .post(
-        `/api/v1/transactions/withdrawal/${account.id}`,
+        `/api/v1/accounts/${account.id}/withdrawals`,
       )
       .set(
         "Authorization",
@@ -407,12 +413,16 @@ describe("Withdrawal Authorization", () => {
 
     const response = await request(app)
       .post(
-        `/api/v1/transactions/withdrawal/${account.id}`,
+        `/api/v1/accounts/${account.id}/withdrawals`,
       )
       .set(
         "Authorization",
         `Bearer ${accessToken}`,
-      );
+      )
+      .send({
+        amount: "100.00",
+        currency: "BDT",
+      });
 
     expect(response.status).toBe(200);
 
@@ -451,12 +461,16 @@ describe("Withdrawal Authorization", () => {
 
     const response = await request(app)
       .post(
-        `/api/v1/transactions/withdrawal/${account.id}`,
+        `/api/v1/accounts/${account.id}/withdrawals`,
       )
       .set(
         "Authorization",
         `Bearer ${accessToken}`,
-      );
+      )
+      .send({
+        amount: "100.00",
+        currency: "BDT",
+      });
 
     expect(response.status).toBe(200);
     expect(response.body.requestId).toEqual(

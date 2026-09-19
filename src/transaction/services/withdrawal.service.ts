@@ -3,14 +3,89 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma";
 import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
+import type { WithdrawalInput } from "../../account/schemas/withdrawal.schema";
 import type { AuthUser } from "../../types/auth";
 
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+type LockedAccountRow = {
+  id: string;
+  user_id: string;
+  account_number: string;
+  account_type: string;
+  status: string;
+};
+
+const lockWithdrawalAccount = async (
+  tx: Prisma.TransactionClient,
+  accountId: string,
+): Promise<LockedAccountRow> => {
+  const accounts = await tx.$queryRaw<LockedAccountRow[]>`
+    SELECT
+      id,
+      user_id,
+      account_number,
+      account_type,
+      status
+    FROM accounts
+    WHERE id = CAST(${accountId} AS uuid)
+    FOR UPDATE
+  `;
+
+  const account = accounts[0];
+
+  if (!account) {
+    throw new AppError(
+      "Account not found",
+      404,
+      ErrorCode.RESOURCE_NOT_FOUND,
+    );
+  }
+
+  return account;
+};
+
+const validateWithdrawalCurrency = async (
+  tx: Prisma.TransactionClient,
+  currencyCode: string,
+) => {
+  const currency = await tx.currency.findUnique({
+    where: {
+      code: currencyCode,
+    },
+    select: {
+      code: true,
+      name: true,
+      symbol: true,
+      decimalPlaces: true,
+      isActive: true,
+    },
+  });
+
+  if (!currency) {
+    throw new AppError(
+      "Currency not found",
+      404,
+      ErrorCode.RESOURCE_NOT_FOUND,
+    );
+  }
+
+  if (!currency.isActive) {
+    throw new AppError(
+      "Currency is inactive",
+      409,
+      ErrorCode.CONFLICT,
+    );
+  }
+
+  return currency;
+};
+
 export const prepareWithdrawal = async (
   user: AuthUser,
   accountId: string,
+  input: WithdrawalInput,
 ) => {
   if (!UUID_REGEX.test(accountId)) {
     throw new AppError(
@@ -20,108 +95,133 @@ export const prepareWithdrawal = async (
     );
   }
 
-  return prisma.$transaction(
-    async (tx: Prisma.TransactionClient) => {
-      const account = await tx.account.findUnique({
-        where: {
-          id: accountId,
-        },
-        select: {
-          id: true,
-          userId: true,
-          accountNumber: true,
-          accountType: true,
-          status: true,
-        },
-      });
+  return prisma.$transaction(async (tx) => {
+    /*
+     * 13.5
+     * Lock the account row before reading financial state.
+     */
+    const account = await lockWithdrawalAccount(
+      tx,
+      accountId,
+    );
 
-      if (!account) {
-        throw new AppError(
-          "Account not found",
-          404,
-          ErrorCode.RESOURCE_NOT_FOUND,
-        );
-      }
+    /*
+     * Authorization / ownership
+     */
+    if (
+      user.role === "CUSTOMER" &&
+      account.user_id !== user.id
+    ) {
+      throw new AppError(
+        "You do not have permission to withdraw from this account",
+        403,
+        ErrorCode.FORBIDDEN,
+      );
+    }
 
-      if (
-        user.role === "CUSTOMER" &&
-        account.userId !== user.id
-      ) {
-        throw new AppError(
-          "You do not have permission to withdraw from this account",
-          403,
-          ErrorCode.FORBIDDEN,
-        );
-      }
+    if (
+      user.role !== "CUSTOMER" &&
+      user.role !== "ADMIN"
+    ) {
+      throw new AppError(
+        "You do not have permission to perform a withdrawal",
+        403,
+        ErrorCode.FORBIDDEN,
+      );
+    }
 
-      if (
-        user.role !== "CUSTOMER" &&
-        user.role !== "ADMIN"
-      ) {
-        throw new AppError(
-          "You do not have permission to perform a withdrawal",
-          403,
-          ErrorCode.FORBIDDEN,
-        );
-      }
+    /*
+     * Withdrawal is allowed only on ACTIVE accounts.
+     */
+    if (account.status !== "ACTIVE") {
+      throw new AppError(
+        "Withdrawals are not allowed for inactive accounts",
+        409,
+        ErrorCode.CONFLICT,
+      );
+    }
 
-      return account;
-    },
-  );
+    /*
+     * 13.6
+     * Validate requested currency inside the same transaction.
+     */
+    const currency =
+      await validateWithdrawalCurrency(
+        tx,
+        input.currency,
+      );
+
+    const amount = new Prisma.Decimal(
+      input.amount,
+    );
+
+    return {
+      account: {
+        id: account.id,
+        userId: account.user_id,
+        accountNumber: account.account_number,
+        accountType: account.account_type,
+        status: account.status,
+      },
+      currency,
+      amount,
+    };
+  });
 };
 
+/*
+ * Keep the existing authorization method for the
+ * current authorization tests/flow.
+ */
 export const authorizeWithdrawal = async (
   accountId: string,
   userId: string,
   userRole: string,
 ) => {
-  return prisma.$transaction(
-    async (tx: Prisma.TransactionClient) => {
-      if (!UUID_REGEX.test(accountId)) {
-        throw new AppError(
-          "Invalid account ID",
-          400,
-          ErrorCode.BAD_REQUEST,
-        );
-      }
+  if (!UUID_REGEX.test(accountId)) {
+    throw new AppError(
+      "Invalid account ID",
+      400,
+      ErrorCode.BAD_REQUEST,
+    );
+  }
 
-      const account = await tx.account.findUnique({
-        where: {
-          id: accountId,
-        },
-      });
+  const account =
+    await prisma.account.findUnique({
+      where: {
+        id: accountId,
+      },
+    });
 
-      if (!account) {
-        throw new AppError(
-          "Account not found",
-          404,
-          ErrorCode.RESOURCE_NOT_FOUND,
-        );
-      }
+  if (!account) {
+    throw new AppError(
+      "Account not found",
+      404,
+      ErrorCode.RESOURCE_NOT_FOUND,
+    );
+  }
 
-      if (
-        userRole === "CUSTOMER" &&
-        account.userId !== userId
-      ) {
-        throw new AppError(
-          "You do not have permission to withdraw from this account",
-          403,
-          ErrorCode.FORBIDDEN,
-        );
-      }
+  if (
+    userRole === "CUSTOMER" &&
+    account.userId !== userId
+  ) {
+    throw new AppError(
+      "You do not have permission to withdraw from this account",
+      403,
+      ErrorCode.FORBIDDEN,
+    );
+  }
 
-      if (
-        userRole !== "CUSTOMER" &&
-        userRole !== "ADMIN"
-      ) {
-        throw new AppError(
-          "You do not have permission to perform a withdrawal",
-          403,
-          ErrorCode.FORBIDDEN,
-        );
-      }
+  if (
+    userRole !== "CUSTOMER" &&
+    userRole !== "ADMIN"
+  ) {
+    throw new AppError(
+      "You do not have permission to perform a withdrawal",
+      403,
+      ErrorCode.FORBIDDEN,
+    );
+  }
 
-      return account;
-    },
-  );
+  return account;
 };

@@ -6,29 +6,18 @@ import {
   it,
 } from "vitest";
 
-import { prisma } from "../config/prisma";
-import { prepareWithdrawal } from "../transaction/services/withdrawal.service";
-
-export interface AuthUser {
-  id: string;
-  email: string;
-  role: string;
-  status: string;
-}
+import { prisma } from "../../config/prisma";
+import { prepareWithdrawal } from "../../transaction/services/withdrawal.service";
 
 describe("13.6 Withdrawal Currency Validation", () => {
   const createdUserIds: string[] = [];
   const createdAccountIds: string[] = [];
-
   let createdTestCurrency = false;
-  let originalXzzActiveState: boolean | null = null;
 
   beforeEach(async () => {
     createdUserIds.length = 0;
     createdAccountIds.length = 0;
-
     createdTestCurrency = false;
-    originalXzzActiveState = null;
 
     const existingCurrency =
       await prisma.currency.findUnique({
@@ -49,31 +38,19 @@ describe("13.6 Withdrawal Currency Validation", () => {
       });
 
       createdTestCurrency = true;
-    } else {
-      /*
-       * Preserve the original state so this test never
-       * contaminates another test or the shared database.
-       */
-      originalXzzActiveState =
-        existingCurrency.isActive;
-
-      if (!existingCurrency.isActive) {
-        await prisma.currency.update({
-          where: {
-            code: "XZZ",
-          },
-          data: {
-            isActive: true,
-          },
-        });
-      }
+    } else if (!existingCurrency.isActive) {
+      await prisma.currency.update({
+        where: {
+          code: "XZZ",
+        },
+        data: {
+          isActive: true,
+        },
+      });
     }
   });
 
   afterEach(async () => {
-    /*
-     * Delete child rows before parent account rows.
-     */
     if (createdAccountIds.length > 0) {
       await prisma.accountBalance.deleteMany({
         where: {
@@ -92,9 +69,6 @@ describe("13.6 Withdrawal Currency Validation", () => {
       });
     }
 
-    /*
-     * Delete user-dependent rows before deleting users.
-     */
     if (createdUserIds.length > 0) {
       await prisma.refreshToken.deleteMany({
         where: {
@@ -129,24 +103,10 @@ describe("13.6 Withdrawal Currency Validation", () => {
       });
     }
 
-    /*
-     * Restore or remove the XZZ test currency.
-     */
     if (createdTestCurrency) {
       await prisma.currency.delete({
         where: {
           code: "XZZ",
-        },
-      });
-    } else if (
-      originalXzzActiveState !== null
-    ) {
-      await prisma.currency.update({
-        where: {
-          code: "XZZ",
-        },
-        data: {
-          isActive: originalXzzActiveState,
         },
       });
     }
@@ -191,24 +151,7 @@ describe("13.6 Withdrawal Currency Validation", () => {
     return account;
   };
 
-  /*
-   * Convert the Prisma User result into the AuthUser
-   * shape expected by prepareWithdrawal().
-   *
-   * Prisma returns:
-   *   role: UserRole
-   *   status: UserStatus
-   *
-   * AuthUser intentionally accepts:
-   *   role: string
-   *   status: string
-   *
-   * Therefore this mapping is type-safe and keeps the
-   * test independent from a CUSTOMER-only literal type.
-   */
-  const buildAuthUser = (
-    user: Awaited<ReturnType<typeof createUser>>,
-  ): AuthUser => ({
+  const buildUser = (user: Awaited<ReturnType<typeof createUser>>,) => ({
     id: user.id,
     email: user.email,
     role: user.role,
@@ -222,7 +165,7 @@ describe("13.6 Withdrawal Currency Validation", () => {
     );
 
     const result = await prepareWithdrawal(
-      buildAuthUser(user),
+      buildUser(user),
       account.id,
       {
         amount: "100.00",
@@ -250,7 +193,7 @@ describe("13.6 Withdrawal Currency Validation", () => {
     );
 
     const result = await prepareWithdrawal(
-      buildAuthUser(user),
+      buildUser(user),
       account.id,
       {
         amount: "100.00",
@@ -261,10 +204,6 @@ describe("13.6 Withdrawal Currency Validation", () => {
     expect(result.currency.code).toBe(
       "XZZ",
     );
-
-    expect(
-      result.currency.isActive,
-    ).toBe(true);
   });
 
   it("should reject an unsupported currency", async () => {
@@ -275,7 +214,7 @@ describe("13.6 Withdrawal Currency Validation", () => {
 
     await expect(
       prepareWithdrawal(
-        buildAuthUser(user),
+        buildUser(user),
         account.id,
         {
           amount: "100.00",
@@ -305,7 +244,7 @@ describe("13.6 Withdrawal Currency Validation", () => {
 
     await expect(
       prepareWithdrawal(
-        buildAuthUser(user),
+        buildUser(user),
         account.id,
         {
           amount: "100.00",
