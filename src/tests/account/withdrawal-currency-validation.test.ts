@@ -11,10 +11,12 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma";
 import { prepareWithdrawal } from "../../transaction/services/withdrawal.service";
 import type { AuthUser } from "../../types/auth";
+import { cleanupWithdrawalTestData } from "../helpers/withdrawal-test-cleanup";
 
 describe("13.6 Withdrawal Currency Validation", () => {
   const createdUserIds: string[] = [];
   const createdAccountIds: string[] = [];
+  const createdTransactionIds: string[] = [];
 
   let createdTestCurrency = false;
   let originalXzzActiveState: boolean | null = null;
@@ -66,89 +68,39 @@ describe("13.6 Withdrawal Currency Validation", () => {
   });
 
   afterEach(async () => {
-    /*
-     * Delete child rows before account rows.
-     */
-    if (createdAccountIds.length > 0) {
-      await prisma.accountBalance.deleteMany({
-        where: {
-          accountId: {
-            in: createdAccountIds,
-          },
-        },
-      });
-
-      await prisma.account.deleteMany({
-        where: {
-          id: {
-            in: createdAccountIds,
-          },
-        },
-      });
-    }
-
-    /*
-     * Delete user-dependent rows before users.
-     */
-    if (createdUserIds.length > 0) {
-      await prisma.refreshToken.deleteMany({
-        where: {
-          userId: {
-            in: createdUserIds,
-          },
-        },
-      });
-
-      await prisma.emailVerificationOtp.deleteMany({
-        where: {
-          userId: {
-            in: createdUserIds,
-          },
-        },
-      });
-
-      await prisma.auditLog.deleteMany({
-        where: {
-          userId: {
-            in: createdUserIds,
-          },
-        },
-      });
-
-      await prisma.user.deleteMany({
-        where: {
-          id: {
-            in: createdUserIds,
-          },
-        },
-      });
-    }
-
-    /*
-     * Restore or remove XZZ.
-     */
-    if (createdTestCurrency) {
-      await prisma.currency.delete({
-        where: {
-          code: "XZZ",
-        },
-      });
-    } else if (
-      originalXzzActiveState !== null
-    ) {
-      await prisma.currency.update({
-        where: {
-          code: "XZZ",
-        },
-        data: {
-          isActive: originalXzzActiveState,
-        },
-      });
-    }
-
-    createdAccountIds.length = 0;
-    createdUserIds.length = 0;
+  await cleanupWithdrawalTestData({
+    transactionIds: createdTransactionIds,
+    accountIds: createdAccountIds,
+    userIds: createdUserIds,
   });
+
+  /*
+   * Restore/remove XZZ after all account-related
+   * cleanup is complete.
+   */
+  if (createdTestCurrency) {
+    await prisma.currency.delete({
+      where: {
+        code: "XZZ",
+      },
+    });
+  } else if (
+    originalXzzActiveState !== null
+  ) {
+    await prisma.currency.update({
+      where: {
+        code: "XZZ",
+      },
+      data: {
+        isActive: originalXzzActiveState,
+      },
+    });
+  }
+
+  createdTransactionIds.length = 0;
+  createdAccountIds.length = 0;
+  createdUserIds.length = 0;
+});
 
   const createUser = async () => {
     const user = await prisma.user.create({
@@ -241,6 +193,10 @@ describe("13.6 Withdrawal Currency Validation", () => {
       },
     );
 
+    createdTransactionIds.push(
+      result.transaction.id,
+    );
+
     expect(result.currency.code).toBe(
       "BDT",
     );
@@ -282,6 +238,10 @@ describe("13.6 Withdrawal Currency Validation", () => {
         amount: "100.00",
         currency: "XZZ",
       },
+    );
+
+    createdTransactionIds.push(
+      result.transaction.id,
     );
 
     expect(result.currency.code).toBe(

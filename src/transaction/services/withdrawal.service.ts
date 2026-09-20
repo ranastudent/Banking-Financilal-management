@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "../../config/prisma";
@@ -85,6 +87,12 @@ const validateWithdrawalCurrency = async (
   return currency;
 };
 
+/*
+ * 13.7
+ *
+ * Lookup the balance for the exact currency requested
+ * by the withdrawal.
+ */
 const getWithdrawalBalance = async (
   tx: Prisma.TransactionClient,
   accountId: string,
@@ -118,6 +126,11 @@ const getWithdrawalBalance = async (
   return balance;
 };
 
+/*
+ * 13.8
+ *
+ * Only availableBalance can be used for a withdrawal.
+ */
 const ensureSufficientWithdrawalBalance = (
   availableBalance: Prisma.Decimal,
   withdrawalAmount: Prisma.Decimal,
@@ -134,9 +147,7 @@ const ensureSufficientWithdrawalBalance = (
 /*
  * 13.9
  *
- * Check the maximum amount permitted for one withdrawal.
- *
- * This is a per-transaction application limit.
+ * Maximum amount allowed for one withdrawal.
  */
 const ensureWithdrawalTransactionLimit = (
   withdrawalAmount: Prisma.Decimal,
@@ -159,12 +170,9 @@ const ensureWithdrawalTransactionLimit = (
  *
  * Debit only availableBalance.
  *
- * The additional database condition
- * `availableBalance >= amount` is deliberate defense-in-depth.
- *
- * Even though the account row is already locked,
- * this prevents this operation itself from ever
- * writing a negative available balance.
+ * The database WHERE condition provides an additional
+ * defense-in-depth check so the balance can never become
+ * negative through this operation.
  */
 const debitWithdrawalBalance = async (
   tx: Prisma.TransactionClient,
@@ -226,6 +234,92 @@ const debitWithdrawalBalance = async (
   return balance;
 };
 
+/*
+ * 13.11
+ *
+ * Create the internal financial transaction.
+ *
+ * For withdrawal:
+ * sourceAccountId = withdrawing account
+ * destinationAccountId = null
+ */
+const createWithdrawalTransaction = async (
+  tx: Prisma.TransactionClient,
+  accountId: string,
+  amount: Prisma.Decimal,
+  currencyCode: string,
+) => {
+  return tx.transaction.create({
+    data: {
+      reference: `WDL-${randomUUID()}`,
+      type: "WITHDRAWAL",
+      status: "PENDING",
+      amount,
+      currencyCode,
+      sourceAccountId: accountId,
+      destinationAccountId: null,
+      provider: "INTERNAL",
+
+      metadata: {
+        operation: "ACCOUNT_WITHDRAWAL",
+        accountId,
+        currencyCode,
+      },
+    },
+    select: {
+      id: true,
+      reference: true,
+      type: true,
+      status: true,
+      amount: true,
+      currencyCode: true,
+      sourceAccountId: true,
+      destinationAccountId: true,
+      provider: true,
+      createdAt: true,
+    },
+  });
+};
+
+/*
+ * 13.12
+ *
+ * Create the debit ledger entry using the exact
+ * before/after balance values from this operation.
+ */
+const createWithdrawalLedgerEntry = async (
+  tx: Prisma.TransactionClient,
+  transactionId: string,
+  accountId: string,
+  currencyCode: string,
+  amount: Prisma.Decimal,
+  balanceBefore: Prisma.Decimal,
+  balanceAfter: Prisma.Decimal,
+) => {
+  return tx.ledgerEntry.create({
+    data: {
+      transactionId,
+      accountId,
+      currencyCode,
+      entryType: "DEBIT",
+      amount,
+      balanceBefore,
+      balanceAfter,
+    },
+    select: {
+      id: true,
+      transactionId: true,
+      accountId: true,
+      currencyCode: true,
+      entryType: true,
+      amount: true,
+      balanceBefore: true,
+      balanceAfter: true,
+      createdAt: true,
+    },
+  });
+};
+
 export const prepareWithdrawal = async (
   user: AuthUser,
   accountId: string,
@@ -242,7 +336,7 @@ export const prepareWithdrawal = async (
   return prisma.$transaction(async (tx) => {
     /*
      * 13.5
-     * Lock the account before reading financial state.
+     * Lock account before reading financial state.
      */
     const account = await lockWithdrawalAccount(
       tx,
@@ -288,7 +382,7 @@ export const prepareWithdrawal = async (
 
     /*
      * 13.6
-     * Validate requested currency.
+     * Validate currency.
      */
     const currency =
       await validateWithdrawalCurrency(
@@ -302,7 +396,7 @@ export const prepareWithdrawal = async (
 
     /*
      * 13.7
-     * Lookup the requested currency balance.
+     * Lookup requested currency balance.
      */
     const balance =
       await getWithdrawalBalance(
@@ -313,7 +407,7 @@ export const prepareWithdrawal = async (
 
     /*
      * 13.8
-     * Available balance must cover withdrawal amount.
+     * Protect against insufficient balance.
      */
     ensureSufficientWithdrawalBalance(
       balance.availableBalance,
@@ -322,7 +416,7 @@ export const prepareWithdrawal = async (
 
     /*
      * 13.9
-     * Apply per-withdrawal transaction limit.
+     * Check per-transaction limit.
      */
     ensureWithdrawalTransactionLimit(
       amount,
@@ -330,13 +424,40 @@ export const prepareWithdrawal = async (
 
     /*
      * 13.10
-     * Debit the available balance.
+     * Debit account balance.
      */
     const debitedBalance =
       await debitWithdrawalBalance(
         tx,
         balance.id,
         amount,
+      );
+
+    /*
+     * 13.11
+     * Create the internal withdrawal transaction.
+     */
+    const transaction =
+      await createWithdrawalTransaction(
+        tx,
+        account.id,
+        amount,
+        currency.code,
+      );
+
+    /*
+     * 13.12
+     * Create the corresponding DEBIT ledger entry.
+     */
+    const ledgerEntry =
+      await createWithdrawalLedgerEntry(
+        tx,
+        transaction.id,
+        account.id,
+        currency.code,
+        amount,
+        balance.availableBalance,
+        debitedBalance.availableBalance,
       );
 
     return {
@@ -362,6 +483,47 @@ export const prepareWithdrawal = async (
 
       lockedBalance:
         debitedBalance.lockedBalance.toString(),
+
+      transaction: {
+        id: transaction.id,
+        reference:
+          transaction.reference,
+        type: transaction.type,
+        status:
+          transaction.status,
+        amount:
+          transaction.amount.toString(),
+        currencyCode:
+          transaction.currencyCode,
+        sourceAccountId:
+          transaction.sourceAccountId,
+        destinationAccountId:
+          transaction.destinationAccountId,
+        provider:
+          transaction.provider,
+        createdAt:
+          transaction.createdAt,
+      },
+
+      ledgerEntry: {
+        id: ledgerEntry.id,
+        transactionId:
+          ledgerEntry.transactionId,
+        accountId:
+          ledgerEntry.accountId,
+        currencyCode:
+          ledgerEntry.currencyCode,
+        entryType:
+          ledgerEntry.entryType,
+        amount:
+          ledgerEntry.amount.toString(),
+        balanceBefore:
+          ledgerEntry.balanceBefore.toString(),
+        balanceAfter:
+          ledgerEntry.balanceAfter.toString(),
+        createdAt:
+          ledgerEntry.createdAt,
+      },
     };
   });
 };
@@ -369,9 +531,8 @@ export const prepareWithdrawal = async (
 /*
  * Existing authorization-only operation.
  *
- * This remains temporarily available for the current
- * authorization tests/controller until the controller
- * is switched to the full financial withdrawal flow.
+ * Kept temporarily until the controller is switched
+ * to the complete financial withdrawal flow.
  */
 export const authorizeWithdrawal = async (
   accountId: string,

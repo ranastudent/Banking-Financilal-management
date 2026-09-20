@@ -12,10 +12,12 @@ import { env } from "../../config/env";
 import { prisma } from "../../config/prisma";
 import { prepareWithdrawal } from "../../transaction/services/withdrawal.service";
 import type { AuthUser } from "../../types/auth";
+import { cleanupWithdrawalTestData } from "../helpers/withdrawal-test-cleanup";
 
 describe("13.9 Withdrawal Transaction Limit", () => {
   const createdUserIds: string[] = [];
   const createdAccountIds: string[] = [];
+  const createdTransactionIds: string[] = [];
 
   beforeEach(() => {
     createdUserIds.length = 0;
@@ -23,58 +25,16 @@ describe("13.9 Withdrawal Transaction Limit", () => {
   });
 
   afterEach(async () => {
-    if (createdAccountIds.length > 0) {
-      await prisma.accountBalance.deleteMany({
-        where: {
-          accountId: {
-            in: createdAccountIds,
-          },
-        },
-      });
-
-      await prisma.account.deleteMany({
-        where: {
-          id: {
-            in: createdAccountIds,
-          },
-        },
-      });
-    }
-
-    if (createdUserIds.length > 0) {
-      await prisma.refreshToken.deleteMany({
-        where: {
-          userId: {
-            in: createdUserIds,
-          },
-        },
-      });
-
-      await prisma.emailVerificationOtp.deleteMany({
-        where: {
-          userId: {
-            in: createdUserIds,
-          },
-        },
-      });
-
-      await prisma.auditLog.deleteMany({
-        where: {
-          userId: {
-            in: createdUserIds,
-          },
-        },
-      });
-
-      await prisma.user.deleteMany({
-        where: {
-          id: {
-            in: createdUserIds,
-          },
-        },
-      });
-    }
+  await cleanupWithdrawalTestData({
+    transactionIds: createdTransactionIds,
+    accountIds: createdAccountIds,
+    userIds: createdUserIds,
   });
+
+  createdTransactionIds.length = 0;
+  createdAccountIds.length = 0;
+  createdUserIds.length = 0;
+});
 
   const createUser = async () => {
     const user = await prisma.user.create({
@@ -161,6 +121,11 @@ describe("13.9 Withdrawal Transaction Limit", () => {
           maximumAmount.toString(),
         currency: "BDT",
       },
+      
+    );
+
+    createdTransactionIds.push(
+      result.transaction.id,
     );
 
     expect(
