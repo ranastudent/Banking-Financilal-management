@@ -6,18 +6,25 @@ import {
   it,
 } from "vitest";
 
+import { Prisma } from "@prisma/client";
+
 import { prisma } from "../../config/prisma";
 import { prepareWithdrawal } from "../../transaction/services/withdrawal.service";
+import type { AuthUser } from "../../types/auth";
 
 describe("13.6 Withdrawal Currency Validation", () => {
   const createdUserIds: string[] = [];
   const createdAccountIds: string[] = [];
+
   let createdTestCurrency = false;
+  let originalXzzActiveState: boolean | null = null;
 
   beforeEach(async () => {
     createdUserIds.length = 0;
     createdAccountIds.length = 0;
+
     createdTestCurrency = false;
+    originalXzzActiveState = null;
 
     const existingCurrency =
       await prisma.currency.findUnique({
@@ -38,19 +45,30 @@ describe("13.6 Withdrawal Currency Validation", () => {
       });
 
       createdTestCurrency = true;
-    } else if (!existingCurrency.isActive) {
-      await prisma.currency.update({
-        where: {
-          code: "XZZ",
-        },
-        data: {
-          isActive: true,
-        },
-      });
+    } else {
+      /*
+       * Preserve the original database state.
+       */
+      originalXzzActiveState =
+        existingCurrency.isActive;
+
+      if (!existingCurrency.isActive) {
+        await prisma.currency.update({
+          where: {
+            code: "XZZ",
+          },
+          data: {
+            isActive: true,
+          },
+        });
+      }
     }
   });
 
   afterEach(async () => {
+    /*
+     * Delete child rows before account rows.
+     */
     if (createdAccountIds.length > 0) {
       await prisma.accountBalance.deleteMany({
         where: {
@@ -69,6 +87,9 @@ describe("13.6 Withdrawal Currency Validation", () => {
       });
     }
 
+    /*
+     * Delete user-dependent rows before users.
+     */
     if (createdUserIds.length > 0) {
       await prisma.refreshToken.deleteMany({
         where: {
@@ -103,10 +124,24 @@ describe("13.6 Withdrawal Currency Validation", () => {
       });
     }
 
+    /*
+     * Restore or remove XZZ.
+     */
     if (createdTestCurrency) {
       await prisma.currency.delete({
         where: {
           code: "XZZ",
+        },
+      });
+    } else if (
+      originalXzzActiveState !== null
+    ) {
+      await prisma.currency.update({
+        where: {
+          code: "XZZ",
+        },
+        data: {
+          isActive: originalXzzActiveState,
         },
       });
     }
@@ -151,7 +186,28 @@ describe("13.6 Withdrawal Currency Validation", () => {
     return account;
   };
 
-  const buildUser = (user: Awaited<ReturnType<typeof createUser>>,) => ({
+  const createBalance = async (
+    accountId: string,
+    currencyCode: string,
+    availableBalance: string,
+  ) => {
+    return prisma.accountBalance.create({
+      data: {
+        accountId,
+        currencyCode,
+        availableBalance:
+          new Prisma.Decimal(availableBalance),
+        lockedBalance:
+          new Prisma.Decimal("0"),
+      },
+    });
+  };
+
+  const buildAuthUser = (
+    user: Awaited<
+      ReturnType<typeof createUser>
+    >,
+  ): AuthUser => ({
     id: user.id,
     email: user.email,
     role: user.role,
@@ -160,12 +216,24 @@ describe("13.6 Withdrawal Currency Validation", () => {
 
   it("should accept an active supported currency", async () => {
     const user = await createUser();
+
     const account = await createAccount(
       user.id,
     );
 
+    /*
+     * The service continues from currency validation
+     * into balance validation, so provide enough BDT
+     * balance for the successful test.
+     */
+    await createBalance(
+      account.id,
+      "BDT",
+      "1000.00",
+    );
+
     const result = await prepareWithdrawal(
-      buildUser(user),
+      buildAuthUser(user),
       account.id,
       {
         amount: "100.00",
@@ -184,16 +252,31 @@ describe("13.6 Withdrawal Currency Validation", () => {
     expect(
       result.amount.toString(),
     ).toBe("100");
+
+    expect(
+      result.balance.availableBalance,
+    ).toBe("1000");
   });
 
   it("should accept XZZ when the test currency is active", async () => {
     const user = await createUser();
+
     const account = await createAccount(
       user.id,
     );
 
+    /*
+     * XZZ must have sufficient balance because
+     * prepareWithdrawal() continues through 13.8.
+     */
+    await createBalance(
+      account.id,
+      "XZZ",
+      "1000.00",
+    );
+
     const result = await prepareWithdrawal(
-      buildUser(user),
+      buildAuthUser(user),
       account.id,
       {
         amount: "100.00",
@@ -204,17 +287,30 @@ describe("13.6 Withdrawal Currency Validation", () => {
     expect(result.currency.code).toBe(
       "XZZ",
     );
+
+    expect(
+      result.currency.isActive,
+    ).toBe(true);
+
+    expect(
+      result.balance.availableBalance,
+    ).toBe("1000");
   });
 
   it("should reject an unsupported currency", async () => {
     const user = await createUser();
+
     const account = await createAccount(
       user.id,
     );
 
+    /*
+     * No balance is required here because the
+     * currency lookup fails before balance lookup.
+     */
     await expect(
       prepareWithdrawal(
-        buildUser(user),
+        buildAuthUser(user),
         account.id,
         {
           amount: "100.00",
@@ -229,6 +325,7 @@ describe("13.6 Withdrawal Currency Validation", () => {
 
   it("should reject an inactive currency", async () => {
     const user = await createUser();
+
     const account = await createAccount(
       user.id,
     );
@@ -242,9 +339,13 @@ describe("13.6 Withdrawal Currency Validation", () => {
       },
     });
 
+    /*
+     * Currency validation fails before balance lookup,
+     * so no balance is required for this test.
+     */
     await expect(
       prepareWithdrawal(
-        buildUser(user),
+        buildAuthUser(user),
         account.id,
         {
           amount: "100.00",

@@ -21,7 +21,9 @@ const lockWithdrawalAccount = async (
   tx: Prisma.TransactionClient,
   accountId: string,
 ): Promise<LockedAccountRow> => {
-  const accounts = await tx.$queryRaw<LockedAccountRow[]>`
+  const accounts = await tx.$queryRaw<
+    LockedAccountRow[]
+  >`
     SELECT
       id,
       user_id,
@@ -82,6 +84,69 @@ const validateWithdrawalCurrency = async (
   return currency;
 };
 
+/*
+ * 13.7
+ *
+ * Read the account balance for the exact currency
+ * requested by the withdrawal.
+ *
+ * A missing balance row means that the account has
+ * no available funds in that currency.
+ *
+ * We do NOT create a balance row here.
+ */
+const getWithdrawalBalance = async (
+  tx: Prisma.TransactionClient,
+  accountId: string,
+  currencyCode: string,
+) => {
+  const balance =
+    await tx.accountBalance.findUnique({
+      where: {
+        accountId_currencyCode: {
+          accountId,
+          currencyCode,
+        },
+      },
+      select: {
+        id: true,
+        currencyCode: true,
+        availableBalance: true,
+        lockedBalance: true,
+      },
+    });
+
+  if (!balance) {
+    return {
+      id: null,
+      currencyCode,
+      availableBalance: new Prisma.Decimal(0),
+      lockedBalance: new Prisma.Decimal(0),
+    };
+  }
+
+  return balance;
+};
+
+/*
+ * 13.8
+ *
+ * Only availableBalance can be used for a withdrawal.
+ * lockedBalance must not be treated as spendable.
+ */
+const ensureSufficientWithdrawalBalance = (
+  availableBalance: Prisma.Decimal,
+  withdrawalAmount: Prisma.Decimal,
+): void => {
+  if (availableBalance.lt(withdrawalAmount)) {
+    throw new AppError(
+      "Insufficient balance",
+      409,
+      ErrorCode.INSUFFICIENT_BALANCE,
+    );
+  }
+};
+
 export const prepareWithdrawal = async (
   user: AuthUser,
   accountId: string,
@@ -98,7 +163,7 @@ export const prepareWithdrawal = async (
   return prisma.$transaction(async (tx) => {
     /*
      * 13.5
-     * Lock the account row before reading financial state.
+     * Lock the account before reading financial state.
      */
     const account = await lockWithdrawalAccount(
       tx,
@@ -106,7 +171,8 @@ export const prepareWithdrawal = async (
     );
 
     /*
-     * Authorization / ownership
+     * 13.3
+     * Authorization / ownership.
      */
     if (
       user.role === "CUSTOMER" &&
@@ -131,7 +197,7 @@ export const prepareWithdrawal = async (
     }
 
     /*
-     * Withdrawal is allowed only on ACTIVE accounts.
+     * Withdrawal is allowed only for ACTIVE accounts.
      */
     if (account.status !== "ACTIVE") {
       throw new AppError(
@@ -143,7 +209,7 @@ export const prepareWithdrawal = async (
 
     /*
      * 13.6
-     * Validate requested currency inside the same transaction.
+     * Validate requested currency.
      */
     const currency =
       await validateWithdrawalCurrency(
@@ -155,6 +221,26 @@ export const prepareWithdrawal = async (
       input.amount,
     );
 
+    /*
+     * 13.7
+     * Lookup the requested currency balance.
+     */
+    const balance =
+      await getWithdrawalBalance(
+        tx,
+        account.id,
+        currency.code,
+      );
+
+    /*
+     * 13.8
+     * Protect against insufficient available funds.
+     */
+    ensureSufficientWithdrawalBalance(
+      balance.availableBalance,
+      amount,
+    );
+
     return {
       account: {
         id: account.id,
@@ -163,15 +249,28 @@ export const prepareWithdrawal = async (
         accountType: account.account_type,
         status: account.status,
       },
+
       currency,
+
       amount,
+
+      balance: {
+        id: balance.id,
+        currencyCode: balance.currencyCode,
+        availableBalance:
+          balance.availableBalance.toString(),
+        lockedBalance:
+          balance.lockedBalance.toString(),
+      },
     };
   });
 };
 
 /*
- * Keep the existing authorization method for the
- * current authorization tests/flow.
+ * Existing authorization-only operation.
+ *
+ * This remains separate until the controller is switched
+ * to the full financial withdrawal flow.
  */
 export const authorizeWithdrawal = async (
   accountId: string,
