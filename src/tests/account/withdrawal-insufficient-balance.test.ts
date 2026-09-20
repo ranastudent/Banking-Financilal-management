@@ -163,7 +163,7 @@ describe("13.8 Withdrawal Insufficient Balance Protection", () => {
     );
 
     expect(
-      result.balance.availableBalance,
+      result.balanceBefore,
     ).toBe("1000");
 
     expect(

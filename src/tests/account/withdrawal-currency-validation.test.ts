@@ -254,7 +254,7 @@ describe("13.6 Withdrawal Currency Validation", () => {
     ).toBe("100");
 
     expect(
-      result.balance.availableBalance,
+      result.balanceBefore,
     ).toBe("1000");
   });
 
@@ -293,7 +293,7 @@ describe("13.6 Withdrawal Currency Validation", () => {
     ).toBe(true);
 
     expect(
-      result.balance.availableBalance,
+      result.balanceBefore,
     ).toBe("1000");
   });
 

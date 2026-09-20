@@ -12,7 +12,7 @@ import { prisma } from "../../config/prisma";
 import { prepareWithdrawal } from "../../transaction/services/withdrawal.service";
 import type { AuthUser } from "../../types/auth";
 
-describe("13.7 Withdrawal Balance Lookup", () => {
+describe("13.10 Withdrawal Account Debit", () => {
   const createdUserIds: string[] = [];
   const createdAccountIds: string[] = [];
 
@@ -73,16 +73,13 @@ describe("13.7 Withdrawal Balance Lookup", () => {
         },
       });
     }
-
-    createdAccountIds.length = 0;
-    createdUserIds.length = 0;
   });
 
   const createUser = async () => {
     const user = await prisma.user.create({
       data: {
-        name: `Withdrawal Balance ${Date.now()}`,
-        email: `withdrawal-balance-${Date.now()}-${Math.random()}@example.com`,
+        name: `Withdrawal Debit ${Date.now()}`,
+        email: `withdrawal-debit-${Date.now()}-${Math.random()}@example.com`,
         passwordHash: "test-password-hash",
         role: "CUSTOMER",
         status: "ACTIVE",
@@ -101,7 +98,7 @@ describe("13.7 Withdrawal Balance Lookup", () => {
     const account = await prisma.account.create({
       data: {
         userId,
-        accountNumber: `WD-BAL-${Date.now()}-${Math.random()
+        accountNumber: `WD-DEBIT-${Date.now()}-${Math.random()
           .toString(36)
           .slice(2, 8)}`,
         accountType: "SAVINGS",
@@ -112,6 +109,27 @@ describe("13.7 Withdrawal Balance Lookup", () => {
     createdAccountIds.push(account.id);
 
     return account;
+  };
+
+  const createBalance = async (
+    accountId: string,
+    availableBalance: string,
+    lockedBalance: string,
+  ) => {
+    return prisma.accountBalance.create({
+      data: {
+        accountId,
+        currencyCode: "BDT",
+        availableBalance:
+          new Prisma.Decimal(
+            availableBalance,
+          ),
+        lockedBalance:
+          new Prisma.Decimal(
+            lockedBalance,
+          ),
+      },
+    });
   };
 
   const buildAuthUser = (
@@ -125,107 +143,140 @@ describe("13.7 Withdrawal Balance Lookup", () => {
     status: user.status,
   });
 
-  it("should lookup the balance for the requested currency", async () => {
+  it("should debit only availableBalance", async () => {
     const user = await createUser();
     const account = await createAccount(
       user.id,
     );
 
-    await prisma.accountBalance.createMany({
-      data: [
-        {
-          accountId: account.id,
-          currencyCode: "BDT",
-          availableBalance:
-            new Prisma.Decimal("10000.00"),
-          lockedBalance:
-            new Prisma.Decimal("500.00"),
-        },
-        {
-          accountId: account.id,
-          currencyCode: "USD",
-          availableBalance:
-            new Prisma.Decimal("500.00"),
-          lockedBalance:
-            new Prisma.Decimal("50.00"),
-        },
-      ],
-    });
+    const balance =
+      await createBalance(
+        account.id,
+        "1000.00",
+        "300.00",
+      );
 
     const result = await prepareWithdrawal(
       buildAuthUser(user),
       account.id,
       {
-        amount: "300.00",
-        currency: "USD",
+        amount: "250.00",
+        currency: "BDT",
       },
     );
 
-    expect(result.currency.code).toBe("USD");
-
-expect(
-  result.balanceBefore,
-    ).toBe("500");
+    expect(
+      result.balanceBefore,
+    ).toBe("1000");
 
     expect(
       result.balanceAfter,
-    ).toBe("200");
+    ).toBe("750");
 
     expect(
       result.lockedBalance,
-    ).toBe("50");
+    ).toBe("300");
 
-    /*
-    * The BDT balance must not be accidentally used.
-    *
-    * USD balance before withdrawal = 500
-    * Withdrawal amount = 300
-    * USD balance after withdrawal = 200
-    */
-    expect(
-      result.balanceBefore,
-    ).not.toBe("10000");
+    const balanceAfter =
+      await prisma.accountBalance.findUnique(
+        {
+          where: {
+            id: balance.id,
+          },
+        },
+      );
 
     expect(
-      result.balanceAfter,
-    ).not.toBe("9700");
-      });
+      balanceAfter?.availableBalance.toString(),
+    ).toBe("750");
 
-  it("should read only the requested currency balance", async () => {
+    expect(
+      balanceAfter?.lockedBalance.toString(),
+    ).toBe("300");
+  });
+
+  it("should allow the balance to reach exactly zero", async () => {
     const user = await createUser();
     const account = await createAccount(
       user.id,
     );
 
-    await prisma.accountBalance.create({
-      data: {
-        accountId: account.id,
-        currencyCode: "BDT",
-        availableBalance:
-          new Prisma.Decimal("10000.00"),
-        lockedBalance:
-          new Prisma.Decimal("0"),
-      },
-    });
+    const balance =
+      await createBalance(
+        account.id,
+        "1000.00",
+        "0.00",
+      );
 
-    /*
-     * USD has no AccountBalance row.
-     *
-     * The service should see zero USD funds and
-     * reject the withdrawal as insufficient.
-     */
+    const result = await prepareWithdrawal(
+      buildAuthUser(user),
+      account.id,
+      {
+        amount: "1000.00",
+        currency: "BDT",
+      },
+    );
+
+    expect(
+      result.balanceBefore,
+    ).toBe("1000");
+
+    expect(
+      result.balanceAfter,
+    ).toBe("0");
+
+    const balanceAfter =
+      await prisma.accountBalance.findUnique(
+        {
+          where: {
+            id: balance.id,
+          },
+        },
+      );
+
+    expect(
+      balanceAfter?.availableBalance.toString(),
+    ).toBe("0");
+  });
+
+  it("should never create a negative available balance", async () => {
+    const user = await createUser();
+    const account = await createAccount(
+      user.id,
+    );
+
+    const balance =
+      await createBalance(
+        account.id,
+        "1000.00",
+        "0.00",
+      );
+
     await expect(
       prepareWithdrawal(
         buildAuthUser(user),
         account.id,
         {
-          amount: "100.00",
-          currency: "USD",
+          amount: "1000.01",
+          currency: "BDT",
         },
       ),
     ).rejects.toMatchObject({
       statusCode: 409,
       code: "INSUFFICIENT_BALANCE",
     });
+
+    const balanceAfter =
+      await prisma.accountBalance.findUnique(
+        {
+          where: {
+            id: balance.id,
+          },
+        },
+      );
+
+    expect(
+      balanceAfter?.availableBalance.toString(),
+    ).toBe("1000");
   });
 });

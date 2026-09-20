@@ -41,6 +41,25 @@ const parsePositiveNumber = (
   return parsed;
 };
 
+const parsePositiveDecimalString = (
+  value: string | undefined,
+  fallback: string,
+  name: string,
+): string => {
+  const normalized = value?.trim() || fallback;
+
+  if (
+    !/^\d+(\.\d{1,8})?$/.test(normalized) ||
+    /^0+(\.0+)?$/.test(normalized)
+  ) {
+    throw new Error(
+      `Invalid environment variable: ${name}`,
+    );
+  }
+
+  return normalized;
+};
+
 export const env = {
   // ==========================================
   // SERVER
@@ -150,6 +169,10 @@ export const env = {
   // RATE LIMITING
   // ==========================================
 
+     // ==========================================
+  // RATE LIMITING
+  // ==========================================
+
   rateLimit: {
     general: {
       windowMs:
@@ -180,5 +203,17 @@ export const env = {
         Number(process.env.OTP_RATE_LIMIT_MAX) ||
         5,
     },
+  },
+
+  // ==========================================
+  // WITHDRAWAL
+  // ==========================================
+
+  withdrawal: {
+    maxAmount: parsePositiveDecimalString(
+      process.env.WITHDRAWAL_MAX_AMOUNT,
+      "50000.00",
+      "WITHDRAWAL_MAX_AMOUNT",
+    ),
   },
 };

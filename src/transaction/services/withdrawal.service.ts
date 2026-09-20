@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "../../config/prisma";
+import { env } from "../../config/env";
 import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
 import type { WithdrawalInput } from "../../account/schemas/withdrawal.schema";
@@ -84,17 +85,6 @@ const validateWithdrawalCurrency = async (
   return currency;
 };
 
-/*
- * 13.7
- *
- * Read the account balance for the exact currency
- * requested by the withdrawal.
- *
- * A missing balance row means that the account has
- * no available funds in that currency.
- *
- * We do NOT create a balance row here.
- */
 const getWithdrawalBalance = async (
   tx: Prisma.TransactionClient,
   accountId: string,
@@ -128,12 +118,6 @@ const getWithdrawalBalance = async (
   return balance;
 };
 
-/*
- * 13.8
- *
- * Only availableBalance can be used for a withdrawal.
- * lockedBalance must not be treated as spendable.
- */
 const ensureSufficientWithdrawalBalance = (
   availableBalance: Prisma.Decimal,
   withdrawalAmount: Prisma.Decimal,
@@ -145,6 +129,101 @@ const ensureSufficientWithdrawalBalance = (
       ErrorCode.INSUFFICIENT_BALANCE,
     );
   }
+};
+
+/*
+ * 13.9
+ *
+ * Check the maximum amount permitted for one withdrawal.
+ *
+ * This is a per-transaction application limit.
+ */
+const ensureWithdrawalTransactionLimit = (
+  withdrawalAmount: Prisma.Decimal,
+): void => {
+  const maximumAmount = new Prisma.Decimal(
+    env.withdrawal.maxAmount,
+  );
+
+  if (withdrawalAmount.gt(maximumAmount)) {
+    throw new AppError(
+      "Withdrawal amount exceeds the transaction limit",
+      409,
+      ErrorCode.TRANSACTION_LIMIT_EXCEEDED,
+    );
+  }
+};
+
+/*
+ * 13.10
+ *
+ * Debit only availableBalance.
+ *
+ * The additional database condition
+ * `availableBalance >= amount` is deliberate defense-in-depth.
+ *
+ * Even though the account row is already locked,
+ * this prevents this operation itself from ever
+ * writing a negative available balance.
+ */
+const debitWithdrawalBalance = async (
+  tx: Prisma.TransactionClient,
+  balanceId: string | null,
+  withdrawalAmount: Prisma.Decimal,
+) => {
+  if (!balanceId) {
+    throw new AppError(
+      "Insufficient balance",
+      409,
+      ErrorCode.INSUFFICIENT_BALANCE,
+    );
+  }
+
+  const updated =
+    await tx.accountBalance.updateMany({
+      where: {
+        id: balanceId,
+        availableBalance: {
+          gte: withdrawalAmount,
+        },
+      },
+      data: {
+        availableBalance: {
+          decrement: withdrawalAmount,
+        },
+      },
+    });
+
+  if (updated.count !== 1) {
+    throw new AppError(
+      "Insufficient balance",
+      409,
+      ErrorCode.INSUFFICIENT_BALANCE,
+    );
+  }
+
+  const balance =
+    await tx.accountBalance.findUnique({
+      where: {
+        id: balanceId,
+      },
+      select: {
+        id: true,
+        currencyCode: true,
+        availableBalance: true,
+        lockedBalance: true,
+      },
+    });
+
+  if (!balance) {
+    throw new AppError(
+      "Balance record not found",
+      404,
+      ErrorCode.RESOURCE_NOT_FOUND,
+    );
+  }
+
+  return balance;
 };
 
 export const prepareWithdrawal = async (
@@ -197,7 +276,7 @@ export const prepareWithdrawal = async (
     }
 
     /*
-     * Withdrawal is allowed only for ACTIVE accounts.
+     * Account must be active.
      */
     if (account.status !== "ACTIVE") {
       throw new AppError(
@@ -234,19 +313,40 @@ export const prepareWithdrawal = async (
 
     /*
      * 13.8
-     * Protect against insufficient available funds.
+     * Available balance must cover withdrawal amount.
      */
     ensureSufficientWithdrawalBalance(
       balance.availableBalance,
       amount,
     );
 
+    /*
+     * 13.9
+     * Apply per-withdrawal transaction limit.
+     */
+    ensureWithdrawalTransactionLimit(
+      amount,
+    );
+
+    /*
+     * 13.10
+     * Debit the available balance.
+     */
+    const debitedBalance =
+      await debitWithdrawalBalance(
+        tx,
+        balance.id,
+        amount,
+      );
+
     return {
       account: {
         id: account.id,
         userId: account.user_id,
-        accountNumber: account.account_number,
-        accountType: account.account_type,
+        accountNumber:
+          account.account_number,
+        accountType:
+          account.account_type,
         status: account.status,
       },
 
@@ -254,14 +354,14 @@ export const prepareWithdrawal = async (
 
       amount,
 
-      balance: {
-        id: balance.id,
-        currencyCode: balance.currencyCode,
-        availableBalance:
-          balance.availableBalance.toString(),
-        lockedBalance:
-          balance.lockedBalance.toString(),
-      },
+      balanceBefore:
+        balance.availableBalance.toString(),
+
+      balanceAfter:
+        debitedBalance.availableBalance.toString(),
+
+      lockedBalance:
+        debitedBalance.lockedBalance.toString(),
     };
   });
 };
@@ -269,8 +369,9 @@ export const prepareWithdrawal = async (
 /*
  * Existing authorization-only operation.
  *
- * This remains separate until the controller is switched
- * to the full financial withdrawal flow.
+ * This remains temporarily available for the current
+ * authorization tests/controller until the controller
+ * is switched to the full financial withdrawal flow.
  */
 export const authorizeWithdrawal = async (
   accountId: string,
