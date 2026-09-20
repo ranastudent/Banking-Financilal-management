@@ -320,6 +320,60 @@ const createWithdrawalLedgerEntry = async (
   });
 };
 
+/*
+ * 13.13
+ *
+ * Create an audit log for the withdrawal.
+ *
+ * The audit log is created inside the same Prisma
+ * transaction as the balance debit, transaction,
+ * and ledger entry.
+ */
+const createWithdrawalAuditLog = async (
+  tx: Prisma.TransactionClient,
+  userId: string,
+  userRole: string,
+  accountId: string,
+  accountNumber: string,
+  transactionId: string,
+  transactionReference: string,
+  amount: Prisma.Decimal,
+  currencyCode: string,
+) => {
+  return tx.auditLog.create({
+    data: {
+      userId,
+      action: "WITHDRAWAL_CREATED",
+      entityType: "TRANSACTION",
+      entityId: transactionId,
+
+      description: `Withdrawal transaction ${transactionReference} created for account ${accountNumber}`,
+
+      metadata: {
+        operation: "ACCOUNT_WITHDRAWAL",
+        transactionId,
+        transactionReference,
+        accountId,
+        accountNumber,
+        amount: amount.toString(),
+        currencyCode,
+        userRole,
+      },
+    },
+
+    select: {
+      id: true,
+      userId: true,
+      action: true,
+      entityType: true,
+      entityId: true,
+      description: true,
+      metadata: true,
+      createdAt: true,
+    },
+  });
+};
+
 export const prepareWithdrawal = async (
   user: AuthUser,
   accountId: string,
@@ -460,6 +514,22 @@ export const prepareWithdrawal = async (
         debitedBalance.availableBalance,
       );
 
+    /*
+    * 13.13
+    * Create the withdrawal audit log.
+    */
+    const auditLog = await createWithdrawalAuditLog(
+      tx,
+      user.id,
+      user.role,
+      account.id,
+      account.account_number,
+      transaction.id,
+      transaction.reference,
+      amount,
+      currency.code,
+    );
+
     return {
       account: {
         id: account.id,
@@ -523,6 +593,17 @@ export const prepareWithdrawal = async (
           ledgerEntry.balanceAfter.toString(),
         createdAt:
           ledgerEntry.createdAt,
+      },
+
+      auditLog: {
+        id: auditLog.id,
+        userId: auditLog.userId,
+        action: auditLog.action,
+        entityType: auditLog.entityType,
+        entityId: auditLog.entityId,
+        description: auditLog.description,
+        metadata: auditLog.metadata,
+        createdAt: auditLog.createdAt,
       },
     };
   });

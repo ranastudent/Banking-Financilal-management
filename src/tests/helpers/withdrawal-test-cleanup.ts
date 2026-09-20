@@ -4,13 +4,30 @@ type WithdrawalTestCleanupParams = {
   transactionIds: string[];
   accountIds: string[];
   userIds: string[];
+  idempotencyRecordIds?: string[];
 };
 
 export const cleanupWithdrawalTestData = async ({
   transactionIds,
   accountIds,
   userIds,
+  idempotencyRecordIds = [],
 }: WithdrawalTestCleanupParams): Promise<void> => {
+
+  /*
+  * IdempotencyRecord belongs to the user.
+  * Remove it before removing users.
+  */
+  if (idempotencyRecordIds.length > 0) {
+    await prisma.idempotencyRecord.deleteMany({
+      where: {
+        id: {
+          in: idempotencyRecordIds,
+        },
+      },
+    });
+  }
+
   /*
    * LedgerEntry depends on both Account and Transaction.
    * Therefore it must be deleted first.

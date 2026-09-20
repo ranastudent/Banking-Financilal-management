@@ -3,7 +3,7 @@ import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate";
 import { authorize } from "../../middleware/authorize";
 import { validate } from "../../middleware/validate";
-import { requireIdempotencyKey } from "../../middleware/idempotency.middleware";
+import { requireIdempotencyKey, } from "../../middleware/idempotency.middleware";
 
 import {
   createAccount,
@@ -16,7 +16,7 @@ import {
 } from "../controllers/account.controller";
 
 import {  processDeposit } from "../../transaction/controllers/deposit.controller";
-import {withdrawalAuthorizationController,} from "../../transaction/controllers/withdrawal.controller";
+import {processWithdrawal} from "../../transaction/controllers/withdrawal.controller";
 
 import {createAccountSchema,updateAccountStatusSchema,} from "../schemas/account.schema";
 
@@ -89,7 +89,8 @@ router.post(
   validate({
     body: withdrawalSchema,
   }),
-  withdrawalAuthorizationController,
+  requireIdempotencyKey,
+  processWithdrawal,
 );
 
 export default router;

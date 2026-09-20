@@ -2,9 +2,13 @@ import type { Request, Response } from "express";
 
 import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
-import { authorizeWithdrawal } from "../services/withdrawal.service";
+import {
+  clearIdempotencyRecord,
+  completeIdempotencyRecord,
+} from "../../middleware/idempotency.middleware";
+import { prepareWithdrawal } from "../services/withdrawal.service";
 
-export const withdrawalAuthorizationController = async (
+export const processWithdrawal = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
@@ -29,21 +33,79 @@ export const withdrawalAuthorizationController = async (
     );
   }
 
-  const account = await authorizeWithdrawal(
-    accountId,
-    req.user.id,
-    req.user.role,
+  let result;
+
+  try {
+    result = await prepareWithdrawal(
+      req.user,
+      accountId,
+      req.body,
+    );
+  } catch (error) {
+    /*
+     * The financial operation failed.
+     * Release the idempotency reservation so a
+     * failed request can be retried.
+     */
+    await clearIdempotencyRecord(res);
+    throw error;
+  }
+
+  const responseData = {
+    message:
+      "Withdrawal transaction created successfully",
+
+    accountId:
+      result.account.id,
+
+    accountNumber:
+      result.account.accountNumber,
+
+    currency:
+      result.currency.code,
+
+    amount:
+      result.amount.toString(),
+
+    balance: {
+      balanceBefore:
+        result.balanceBefore,
+
+      balanceAfter:
+        result.balanceAfter,
+
+      lockedBalance:
+        result.lockedBalance,
+    },
+
+    transaction:
+      result.transaction,
+
+    ledgerEntry:
+      result.ledgerEntry,
+
+    auditLog:
+      result.auditLog,
+
+    userId:
+      req.user.id,
+
+    userRole:
+      req.user.role,
+  };
+
+  /*
+   * Save the exact successful response.
+   */
+  await completeIdempotencyRecord(
+    res,
+    200,
+    responseData,
   );
 
   res.status(200).json({
     success: true,
-    data: {
-      message: "Withdrawal authorization successful",
-      accountId: account.id,
-      accountNumber: account.accountNumber,
-      userId: req.user.id,
-      userRole: req.user.role,
-    },
+    data: responseData,
     requestId: req.requestId,
   });
 };
