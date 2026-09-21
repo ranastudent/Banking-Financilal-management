@@ -12,6 +12,29 @@ import type { AuthUser } from "../../types/auth";
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+type WithdrawalFailurePoint =
+  | "after-debit"
+  | "after-transaction"
+  | "after-ledger"
+  | "after-audit";
+
+type WithdrawalServiceOptions = {
+  failurePoint?: WithdrawalFailurePoint;
+};
+
+const simulateWithdrawalFailure = (
+  failurePoint:
+    | WithdrawalFailurePoint
+    | undefined,
+  currentPoint: WithdrawalFailurePoint,
+): void => {
+  if (failurePoint === currentPoint) {
+    throw new Error(
+      `Simulated withdrawal failure at ${currentPoint}`,
+    );
+  }
+};
+
 type LockedAccountRow = {
   id: string;
   user_id: string;
@@ -378,6 +401,7 @@ export const prepareWithdrawal = async (
   user: AuthUser,
   accountId: string,
   input: WithdrawalInput,
+  options: WithdrawalServiceOptions = {},
 ) => {
   if (!UUID_REGEX.test(accountId)) {
     throw new AppError(
@@ -486,6 +510,10 @@ export const prepareWithdrawal = async (
         balance.id,
         amount,
       );
+    simulateWithdrawalFailure(
+      options.failurePoint,
+      "after-debit",
+    );
 
     /*
      * 13.11
@@ -498,6 +526,11 @@ export const prepareWithdrawal = async (
         amount,
         currency.code,
       );
+    
+    simulateWithdrawalFailure(
+      options.failurePoint,
+      "after-transaction"
+    );
 
     /*
      * 13.12
@@ -513,6 +546,10 @@ export const prepareWithdrawal = async (
         balance.availableBalance,
         debitedBalance.availableBalance,
       );
+    simulateWithdrawalFailure(
+      options.failurePoint,
+      "after-ledger",
+    );
 
     /*
     * 13.13
@@ -528,6 +565,11 @@ export const prepareWithdrawal = async (
       transaction.reference,
       amount,
       currency.code,
+    );
+
+    simulateWithdrawalFailure(
+      options.failurePoint,
+      "after-audit",
     );
 
     return {
