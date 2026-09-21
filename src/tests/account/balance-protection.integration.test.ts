@@ -256,46 +256,70 @@ describe("11.4.4 Balance Protection Integration/Security", () => {
     );
   });
 
-  it("should not modify balance during withdrawal authorization", async () => {
-    const customer = await createTestUser(
-      "Balance Protection Withdrawal User",
-    );
+  it("should reject client-provided balance fields during withdrawal", async () => {
+  const customer = await createTestUser(
+    "Balance Protection Withdrawal User",
+  );
 
-    const account = await createAccountWithBalance(
-      customer.id,
-      "WITHDRAWAL",
-    );
+  const account = await createAccountWithBalance(
+    customer.id,
+    "WITHDRAWAL",
+  );
 
-    const accessToken = createAccessToken(customer);
+  const accessToken = createAccessToken(customer);
 
-    const before = await getBalance(account.id);
+  const before = await getBalance(account.id);
 
-    expect(before).not.toBeNull();
+  expect(before).not.toBeNull();
 
-    const response = await request(app)
-      .post(`/api/v1/transactions/withdrawal/${account.id}`)
-      .set("Authorization", `Bearer ${accessToken}`)
-      .send({
-        amount: 2500,
-        balance: 999999,
-        availableBalance: 999999,
-        lockedBalance: 999999,
-      });
+  const response = await request(app)
+    .post(
+      `/api/v1/accounts/${account.id}/withdrawals`,
+    )
+    .set(
+      "Authorization",
+      `Bearer ${accessToken}`,
+    )
+    .send({
+      amount: "2500.00",
+      currency: "BDT",
 
-    expect(response.status).toBe(200);
-    expect(response.body.success).toBe(true);
+      /*
+       * These are server-controlled financial fields.
+       * The client must never be allowed to provide them.
+       */
+      balance: "999999.00",
+      availableBalance: "999999.00",
+      lockedBalance: "999999.00",
+    });
 
-    const after = await getBalance(account.id);
+  expect(response.status).toBe(400);
 
-    expect(after).not.toBeNull();
+  expect(response.body.success).toBe(false);
 
-    expect(after?.availableBalance.toString()).toBe(
-      before?.availableBalance.toString(),
-    );
+  expect(
+    response.body.error.code,
+  ).toBe("VALIDATION_ERROR");
 
-    expect(after?.lockedBalance.toString()).toBe(
-      before?.lockedBalance.toString(),
-    );
+  const after = await getBalance(account.id);
+
+  expect(after).not.toBeNull();
+
+  /*
+   * The rejected request must not modify
+   * either financial balance.
+   */
+  expect(
+    after?.availableBalance.toString(),
+  ).toBe(
+    before?.availableBalance.toString(),
+  );
+
+  expect(
+    after?.lockedBalance.toString(),
+  ).toBe(
+    before?.lockedBalance.toString(),
+  );
   });
 
   it("should not modify either balance during transfer authorization", async () => {

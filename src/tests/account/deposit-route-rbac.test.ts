@@ -16,13 +16,155 @@ import { generateAccessToken } from "../../auth/utils/jwt";
 describe("12.2 Deposit Route + JWT + RBAC", () => {
   const createdUserIds: string[] = [];
   const createdAccountIds: string[] = [];
+  const createdTransactionIds: string[] = [];
+  const createdIdempotencyRecordIds: string[] = [];
 
   beforeEach(() => {
     createdUserIds.length = 0;
     createdAccountIds.length = 0;
+    createdTransactionIds.length = 0;
+    createdIdempotencyRecordIds.length = 0;
   });
 
   afterEach(async () => {
+    /*
+     * Deposit operations can create:
+     *
+     * Transaction
+     * TransactionLeg
+     * LedgerEntry
+     * AuditLog
+     * IdempotencyRecord
+     *
+     * Delete child records before parent records.
+     */
+
+    /*
+     * Find all transactions created for our test accounts.
+     *
+     * This protects the cleanup even when a successful
+     * deposit test did not explicitly store the transaction ID.
+     */
+    if (createdAccountIds.length > 0) {
+      const transactions =
+        await prisma.transaction.findMany({
+          where: {
+            OR: [
+              {
+                destinationAccountId: {
+                  in: createdAccountIds,
+                },
+              },
+              {
+                sourceAccountId: {
+                  in: createdAccountIds,
+                },
+              },
+            ],
+          },
+          select: {
+            id: true,
+          },
+        });
+
+      for (const transaction of transactions) {
+        if (
+          !createdTransactionIds.includes(
+            transaction.id,
+          )
+        ) {
+          createdTransactionIds.push(
+            transaction.id,
+          );
+        }
+      }
+    }
+
+    /*
+     * Delete audit logs related to our test transactions.
+     */
+    if (createdTransactionIds.length > 0) {
+      await prisma.auditLog.deleteMany({
+        where: {
+          OR: [
+            {
+              entityId: {
+                in: createdTransactionIds,
+              },
+            },
+            {
+              userId: {
+                in: createdUserIds,
+              },
+            },
+          ],
+        },
+      });
+
+      /*
+       * Delete ledger entries before transactions.
+       */
+      await prisma.ledgerEntry.deleteMany({
+        where: {
+          transactionId: {
+            in: createdTransactionIds,
+          },
+        },
+      });
+
+      /*
+       * Delete transaction legs before transactions.
+       */
+      await prisma.transactionLeg.deleteMany({
+        where: {
+          transactionId: {
+            in: createdTransactionIds,
+          },
+        },
+      });
+
+      /*
+       * Delete transactions last.
+       */
+      await prisma.transaction.deleteMany({
+        where: {
+          id: {
+            in: createdTransactionIds,
+          },
+        },
+      });
+
+      createdTransactionIds.length = 0;
+    }
+
+    /*
+     * Delete idempotency records created by these tests.
+     */
+    if (createdUserIds.length > 0) {
+      await prisma.idempotencyRecord.deleteMany({
+        where: {
+          userId: {
+            in: createdUserIds,
+          },
+        },
+      });
+    }
+
+    if (createdIdempotencyRecordIds.length > 0) {
+      await prisma.idempotencyRecord.deleteMany({
+        where: {
+          id: {
+            in: createdIdempotencyRecordIds,
+          },
+        },
+      });
+
+      createdIdempotencyRecordIds.length = 0;
+    }
+
+    /*
+     * Delete account balances before accounts.
+     */
     if (createdAccountIds.length > 0) {
       await prisma.accountBalance.deleteMany({
         where: {
@@ -43,6 +185,9 @@ describe("12.2 Deposit Route + JWT + RBAC", () => {
       createdAccountIds.length = 0;
     }
 
+    /*
+     * Delete user-dependent records before users.
+     */
     if (createdUserIds.length > 0) {
       await prisma.refreshToken.deleteMany({
         where: {
@@ -81,11 +226,15 @@ describe("12.2 Deposit Route + JWT + RBAC", () => {
   });
 
   const createUser = async (
-    role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR",
+    role:
+      | "CUSTOMER"
+      | "ADMIN"
+      | "SUPPORT"
+      | "AUDITOR",
   ) => {
     const user = await prisma.user.create({
       data: {
-        name: `Deposit Route ${Date.now()}`,
+        name: `Deposit Route ${Date.now()}-${Math.random()}`,
         email: `deposit-route-${Date.now()}-${Math.random()}@example.com`,
         passwordHash: "test-password-hash",
         role,
@@ -99,13 +248,16 @@ describe("12.2 Deposit Route + JWT + RBAC", () => {
     return user;
   };
 
-  const createAccount = async (userId: string) => {
+  const createAccount = async (
+    userId: string,
+  ) => {
     const account = await prisma.account.create({
       data: {
         userId,
-        accountNumber: `ACC-${Date.now()}-${Math.random()
-          .toString(36)
-          .slice(2, 8)}`,
+        accountNumber:
+          `ACC-${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2, 8)}`,
         accountType: "SAVINGS",
         status: "ACTIVE",
       },
@@ -119,7 +271,11 @@ describe("12.2 Deposit Route + JWT + RBAC", () => {
   const createAccessToken = (user: {
     id: string;
     email: string;
-    role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR";
+    role:
+      | "CUSTOMER"
+      | "ADMIN"
+      | "SUPPORT"
+      | "AUDITOR";
   }) => {
     return generateAccessToken({
       id: user.id,
@@ -129,304 +285,463 @@ describe("12.2 Deposit Route + JWT + RBAC", () => {
     });
   };
 
+  const createIdempotencyKey = (
+    prefix: string,
+  ) => {
+    return `${prefix}-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 10)}`;
+  };
+
   it("should allow CUSTOMER to access the deposit route for their own account", async () => {
-    const customer = await createUser("CUSTOMER");
-    const account = await createAccount(customer.id);
+    const customer =
+      await createUser("CUSTOMER");
 
-    const accessToken = createAccessToken(customer);
+    const account =
+      await createAccount(customer.id);
 
-    const response = await request(app)
-      .post(`/api/v1/accounts/${account.id}/deposits`)
-      .set(
-        "Authorization",
-        `Bearer ${accessToken}`,
-      )
-      .send({
-        amount: "5000.00",
-        currency: "BDT",
-      });
+    const accessToken =
+      createAccessToken(customer);
+
+    const response =
+      await request(app)
+        .post(
+          `/api/v1/accounts/${account.id}/deposits`,
+        )
+        .set(
+          "Authorization",
+          `Bearer ${accessToken}`,
+        )
+        .set(
+          "Idempotency-Key",
+          createIdempotencyKey(
+            "deposit-customer",
+          ),
+        )
+        .send({
+          amount: "5000.00",
+          currency: "BDT",
+        });
 
     expect(response.status).toBe(200);
-    expect(response.body.success).toBe(true);
-    expect(response.body.data.accountId).toBe(
-      account.id,
-    );
-    expect(response.body.data.userId).toBe(
-      customer.id,
-    );
-    expect(response.body.data.userRole).toBe(
-      "CUSTOMER",
-    );
+
+    expect(
+      response.body.success,
+    ).toBe(true);
+
+    expect(
+      response.body.data.accountId,
+    ).toBe(account.id);
+
+    expect(
+      response.body.data.userId,
+    ).toBe(customer.id);
+
+    expect(
+      response.body.data.userRole,
+    ).toBe("CUSTOMER");
   });
 
   it("should reject CUSTOMER from depositing into another customer's account", async () => {
-    const customerA = await createUser("CUSTOMER");
-    const customerB = await createUser("CUSTOMER");
+    const customerA =
+      await createUser("CUSTOMER");
 
-    const accountB = await createAccount(customerB.id);
+    const customerB =
+      await createUser("CUSTOMER");
 
-    const accessToken = createAccessToken(customerA);
+    const accountB =
+      await createAccount(customerB.id);
 
-    const response = await request(app)
-      .post(`/api/v1/accounts/${accountB.id}/deposits`)
-      .set(
-        "Authorization",
-        `Bearer ${accessToken}`,
-      )
-      .send({
-        amount: "5000.00",
-        currency: "BDT",
-      });
+    const accessToken =
+      createAccessToken(customerA);
+
+    const response =
+      await request(app)
+        .post(
+          `/api/v1/accounts/${accountB.id}/deposits`,
+        )
+        .set(
+          "Authorization",
+          `Bearer ${accessToken}`,
+        )
+        .set(
+          "Idempotency-Key",
+          createIdempotencyKey(
+            "deposit-owner-check",
+          ),
+        )
+        .send({
+          amount: "5000.00",
+          currency: "BDT",
+        });
 
     expect(response.status).toBe(403);
-    expect(response.body.success).toBe(false);
-    expect(response.body.error.code).toBe(
-      "FORBIDDEN",
-    );
+
+    expect(
+      response.body.success,
+    ).toBe(false);
+
+    expect(
+      response.body.error.code,
+    ).toBe("FORBIDDEN");
   });
 
   it("should allow ADMIN to deposit into any account", async () => {
-    const admin = await createUser("ADMIN");
-    const customer = await createUser("CUSTOMER");
+    const admin =
+      await createUser("ADMIN");
 
-    const account = await createAccount(customer.id);
+    const customer =
+      await createUser("CUSTOMER");
 
-    const accessToken = createAccessToken(admin);
+    const account =
+      await createAccount(customer.id);
 
-    const response = await request(app)
-      .post(`/api/v1/accounts/${account.id}/deposits`)
-      .set(
-        "Authorization",
-        `Bearer ${accessToken}`,
-      )
-      .send({
-        amount: "5000.00",
-        currency: "BDT",
-      });
+    const accessToken =
+      createAccessToken(admin);
+
+    const response =
+      await request(app)
+        .post(
+          `/api/v1/accounts/${account.id}/deposits`,
+        )
+        .set(
+          "Authorization",
+          `Bearer ${accessToken}`,
+        )
+        .set(
+          "Idempotency-Key",
+          createIdempotencyKey(
+            "deposit-admin",
+          ),
+        )
+        .send({
+          amount: "5000.00",
+          currency: "BDT",
+        });
 
     expect(response.status).toBe(200);
-    expect(response.body.success).toBe(true);
-    expect(response.body.data.accountId).toBe(
-      account.id,
-    );
-    expect(response.body.data.userId).toBe(
-      admin.id,
-    );
-    expect(response.body.data.userRole).toBe(
-      "ADMIN",
-    );
+
+    expect(
+      response.body.success,
+    ).toBe(true);
+
+    expect(
+      response.body.data.accountId,
+    ).toBe(account.id);
+
+    expect(
+      response.body.data.userId,
+    ).toBe(admin.id);
+
+    expect(
+      response.body.data.userRole,
+    ).toBe("ADMIN");
   });
 
   it("should reject SUPPORT", async () => {
-    const support = await createUser("SUPPORT");
-    const customer = await createUser("CUSTOMER");
+    const support =
+      await createUser("SUPPORT");
 
-    const account = await createAccount(customer.id);
+    const customer =
+      await createUser("CUSTOMER");
 
-    const accessToken = createAccessToken(support);
+    const account =
+      await createAccount(customer.id);
 
-    const response = await request(app)
-      .post(`/api/v1/accounts/${account.id}/deposits`)
-      .set(
-        "Authorization",
-        `Bearer ${accessToken}`,
-      )
-      .send({
-        amount: "5000.00",
-        currency: "BDT",
-      });
+    const accessToken =
+      createAccessToken(support);
+
+    const response =
+      await request(app)
+        .post(
+          `/api/v1/accounts/${account.id}/deposits`,
+        )
+        .set(
+          "Authorization",
+          `Bearer ${accessToken}`,
+        )
+        .send({
+          amount: "5000.00",
+          currency: "BDT",
+        });
 
     expect(response.status).toBe(403);
-    expect(response.body.success).toBe(false);
-    expect(response.body.error.code).toBe(
-      "FORBIDDEN",
-    );
+
+    expect(
+      response.body.success,
+    ).toBe(false);
+
+    expect(
+      response.body.error.code,
+    ).toBe("FORBIDDEN");
   });
 
   it("should reject AUDITOR", async () => {
-    const auditor = await createUser("AUDITOR");
-    const customer = await createUser("CUSTOMER");
+    const auditor =
+      await createUser("AUDITOR");
 
-    const account = await createAccount(customer.id);
+    const customer =
+      await createUser("CUSTOMER");
 
-    const accessToken = createAccessToken(auditor);
+    const account =
+      await createAccount(customer.id);
 
-    const response = await request(app)
-      .post(`/api/v1/accounts/${account.id}/deposits`)
-      .set(
-        "Authorization",
-        `Bearer ${accessToken}`,
-      )
-      .send({
-        amount: "5000.00",
-        currency: "BDT",
-      });
+    const accessToken =
+      createAccessToken(auditor);
+
+    const response =
+      await request(app)
+        .post(
+          `/api/v1/accounts/${account.id}/deposits`,
+        )
+        .set(
+          "Authorization",
+          `Bearer ${accessToken}`,
+        )
+        .send({
+          amount: "5000.00",
+          currency: "BDT",
+        });
 
     expect(response.status).toBe(403);
-    expect(response.body.success).toBe(false);
-    expect(response.body.error.code).toBe(
-      "FORBIDDEN",
-    );
+
+    expect(
+      response.body.success,
+    ).toBe(false);
+
+    expect(
+      response.body.error.code,
+    ).toBe("FORBIDDEN");
   });
 
   it("should reject an unauthenticated request", async () => {
-    const response = await request(app)
-      .post(
-        "/api/v1/accounts/00000000-0000-0000-0000-000000000000/deposits",
-      )
-      .send({
-        amount: "5000.00",
-        currency: "BDT",
-      });
+    const response =
+      await request(app)
+        .post(
+          "/api/v1/accounts/00000000-0000-0000-0000-000000000000/deposits",
+        )
+        .send({
+          amount: "5000.00",
+          currency: "BDT",
+        });
 
     expect(response.status).toBe(401);
-    expect(response.body.success).toBe(false);
-    expect(response.body.error.code).toBe(
-      "UNAUTHORIZED",
-    );
+
+    expect(
+      response.body.success,
+    ).toBe(false);
+
+    expect(
+      response.body.error.code,
+    ).toBe("UNAUTHORIZED");
   });
 
   it("should reject a refresh token", async () => {
-    const refreshToken = jwt.sign(
-      {
-        sub: "customer-123",
-        tokenType: "refresh",
-        jti: "refresh-jti-123",
-      },
-      env.jwtRefreshSecret,
-      {
-        expiresIn: "7d",
-      },
-    );
+    const refreshToken =
+      jwt.sign(
+        {
+          sub: "customer-123",
+          tokenType: "refresh",
+          jti: "refresh-jti-123",
+        },
+        env.jwtRefreshSecret,
+        {
+          expiresIn: "7d",
+        },
+      );
 
-    const response = await request(app)
-      .post(
-        "/api/v1/accounts/00000000-0000-0000-0000-000000000000/deposits",
-      )
-      .set(
-        "Authorization",
-        `Bearer ${refreshToken}`,
-      )
-      .send({
-        amount: "5000.00",
-        currency: "BDT",
-      });
+    const response =
+      await request(app)
+        .post(
+          "/api/v1/accounts/00000000-0000-0000-0000-000000000000/deposits",
+        )
+        .set(
+          "Authorization",
+          `Bearer ${refreshToken}`,
+        )
+        .send({
+          amount: "5000.00",
+          currency: "BDT",
+        });
 
     expect(response.status).toBe(401);
-    expect(response.body.success).toBe(false);
-    expect(response.body.error.code).toBe(
-      "UNAUTHORIZED",
-    );
+
+    expect(
+      response.body.success,
+    ).toBe(false);
+
+    expect(
+      response.body.error.code,
+    ).toBe("UNAUTHORIZED");
   });
 
   it("should validate the deposit body after authentication and RBAC", async () => {
-    const customer = await createUser("CUSTOMER");
-    const account = await createAccount(customer.id);
+    const customer =
+      await createUser("CUSTOMER");
 
-    const accessToken = createAccessToken(customer);
+    const account =
+      await createAccount(customer.id);
 
-    const response = await request(app)
-      .post(`/api/v1/accounts/${account.id}/deposits`)
-      .set(
-        "Authorization",
-        `Bearer ${accessToken}`,
-      )
-      .send({
-        amount: "-100.00",
-        currency: "BDT",
-      });
+    const accessToken =
+      createAccessToken(customer);
+
+    const response =
+      await request(app)
+        .post(
+          `/api/v1/accounts/${account.id}/deposits`,
+        )
+        .set(
+          "Authorization",
+          `Bearer ${accessToken}`,
+        )
+        .send({
+          amount: "-100.00",
+          currency: "BDT",
+        });
 
     expect(response.status).toBe(400);
-    expect(response.body.success).toBe(false);
+
+    expect(
+      response.body.success,
+    ).toBe(false);
   });
 
   it("should reject client-provided balance fields", async () => {
-    const customer = await createUser("CUSTOMER");
-    const account = await createAccount(customer.id);
+    const customer =
+      await createUser("CUSTOMER");
 
-    const accessToken = createAccessToken(customer);
+    const account =
+      await createAccount(customer.id);
 
-    const response = await request(app)
-      .post(`/api/v1/accounts/${account.id}/deposits`)
-      .set(
-        "Authorization",
-        `Bearer ${accessToken}`,
-      )
-      .send({
-        amount: "5000.00",
-        currency: "BDT",
-        balance: "999999.00",
-      });
+    const accessToken =
+      createAccessToken(customer);
+
+    const response =
+      await request(app)
+        .post(
+          `/api/v1/accounts/${account.id}/deposits`,
+        )
+        .set(
+          "Authorization",
+          `Bearer ${accessToken}`,
+        )
+        .send({
+          amount: "5000.00",
+          currency: "BDT",
+          balance: "999999.00",
+        });
 
     expect(response.status).toBe(400);
-    expect(response.body.success).toBe(false);
+
+    expect(
+      response.body.success,
+    ).toBe(false);
   });
 
   it("should reject an unsupported currency format", async () => {
-    const customer = await createUser("CUSTOMER");
-    const account = await createAccount(customer.id);
+    const customer =
+      await createUser("CUSTOMER");
 
-    const accessToken = createAccessToken(customer);
+    const account =
+      await createAccount(customer.id);
 
-    const response = await request(app)
-      .post(`/api/v1/accounts/${account.id}/deposits`)
-      .set(
-        "Authorization",
-        `Bearer ${accessToken}`,
-      )
-      .send({
-        amount: "5000.00",
-        currency: "USDX",
-      });
+    const accessToken =
+      createAccessToken(customer);
+
+    const response =
+      await request(app)
+        .post(
+          `/api/v1/accounts/${account.id}/deposits`,
+        )
+        .set(
+          "Authorization",
+          `Bearer ${accessToken}`,
+        )
+        .send({
+          amount: "5000.00",
+          currency: "USDX",
+        });
 
     expect(response.status).toBe(400);
-    expect(response.body.success).toBe(false);
+
+    expect(
+      response.body.success,
+    ).toBe(false);
   });
 
   it("should return 404 when the account does not exist", async () => {
-    const customer = await createUser("CUSTOMER");
+    const customer =
+      await createUser("CUSTOMER");
 
-    const accessToken = createAccessToken(customer);
+    const accessToken =
+      createAccessToken(customer);
 
-    const response = await request(app)
-      .post(
-        "/api/v1/accounts/00000000-0000-0000-0000-000000000000/deposits",
-      )
-      .set(
-        "Authorization",
-        `Bearer ${accessToken}`,
-      )
-      .send({
-        amount: "5000.00",
-        currency: "BDT",
-      });
+    const response =
+      await request(app)
+        .post(
+          "/api/v1/accounts/00000000-0000-0000-0000-000000000000/deposits",
+        )
+        .set(
+          "Authorization",
+          `Bearer ${accessToken}`,
+        )
+        .set(
+          "Idempotency-Key",
+          createIdempotencyKey(
+            "deposit-not-found",
+          ),
+        )
+        .send({
+          amount: "5000.00",
+          currency: "BDT",
+        });
 
     expect(response.status).toBe(404);
-    expect(response.body.success).toBe(false);
-    expect(response.body.error.code).toBe(
-      "RESOURCE_NOT_FOUND",
-    );
+
+    expect(
+      response.body.success,
+    ).toBe(false);
+
+    expect(
+      response.body.error.code,
+    ).toBe("RESOURCE_NOT_FOUND");
   });
 
   it("should include requestId for a successful deposit authorization", async () => {
-    const customer = await createUser("CUSTOMER");
-    const account = await createAccount(customer.id);
+    const customer =
+      await createUser("CUSTOMER");
 
-    const accessToken = createAccessToken(customer);
+    const account =
+      await createAccount(customer.id);
 
-    const response = await request(app)
-      .post(`/api/v1/accounts/${account.id}/deposits`)
-      .set(
-        "Authorization",
-        `Bearer ${accessToken}`,
-      )
-      .send({
-        amount: "5000.00",
-        currency: "BDT",
-      });
+    const accessToken =
+      createAccessToken(customer);
+
+    const response =
+      await request(app)
+        .post(
+          `/api/v1/accounts/${account.id}/deposits`,
+        )
+        .set(
+          "Authorization",
+          `Bearer ${accessToken}`,
+        )
+        .set(
+          "Idempotency-Key",
+          createIdempotencyKey(
+            "deposit-request-id",
+          ),
+        )
+        .send({
+          amount: "5000.00",
+          currency: "BDT",
+        });
 
     expect(response.status).toBe(200);
-    expect(response.body.requestId).toEqual(
+
+    expect(
+      response.body.requestId,
+    ).toEqual(
       expect.any(String),
     );
   });
