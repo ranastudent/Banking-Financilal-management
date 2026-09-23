@@ -26,12 +26,14 @@ import auditorApprovalRecordRoutes from "../auditor/routes/approval-record.route
 import auditorFxRequestRoutes from "../auditor/routes/fx-request.routes";
 import userRoutes from "../user/routes/user.routes";
 import accountRoutes from "../account/routes/account.routes";
+import transferRoutes from "../transaction/routes/transfer.routes";
 
 const router = Router();
 
 router.use("/auth", authRoutes);
 router.use("/admin", adminRoutes);
 router.use("/transactions", transactionRoutes);
+router.use("/transfers", transferRoutes);
 router.use("/beneficiaries", beneficiaryRoutes);
 router.use("/fx-requests", fxRequestRoutes);
 router.use("/admin/users", adminUserRoutes);

@@ -3,6 +3,11 @@ import type { Request, Response } from "express";
 import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
 import { authorizeTransfer } from "../services/transfer.service";
+import { prepareTransfer } from "../services/transfer.service";
+import {
+  clearIdempotencyRecord,
+  completeIdempotencyRecord,
+} from "../../middleware/idempotency.middleware";
 
 export const transferAuthorizationController = async (
   req: Request,
@@ -65,6 +70,48 @@ export const transferAuthorizationController = async (
       userId: req.user.id,
       userRole: req.user.role,
     },
+    requestId: req.requestId,
+  });
+};
+
+export const processTransfer = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  if (!req.user) {
+    throw new AppError(
+      "Authentication required",
+      401,
+      ErrorCode.UNAUTHORIZED,
+    );
+  }
+
+  let result;
+
+  try {
+    result = await prepareTransfer(
+      req.user,
+      req.body,
+    );
+  } catch (error) {
+    await clearIdempotencyRecord(res);
+    throw error;
+  }
+
+  const responseData = {
+    message: "Fund transfer completed successfully",
+    transaction: result.transaction,
+  };
+
+  await completeIdempotencyRecord(
+    res,
+    200,
+    responseData,
+  );
+
+  res.status(200).json({
+    success: true,
+    data: responseData,
     requestId: req.requestId,
   });
 };
