@@ -376,6 +376,25 @@ export const prepareTransfer = async (
       "credit",
     );
 
+    // ============================================================
+    // TEST-ONLY FAILURE INJECTION
+    // Used by 14.6.1.c to verify transaction rollback
+    // after debit + credit have already occurred.
+    // ============================================================
+
+    if (
+      (process.env.NODE_ENV === "test" ||
+        process.env.VITEST === "true") &&
+      process.env.TRANSFER_TEST_FAILURE_AFTER_MUTATION ===
+        "true"
+    ) {
+      throw new AppError(
+        "Test failure after balance mutation",
+        500,
+        ErrorCode.INTERNAL_SERVER_ERROR,
+      );
+    }
+
     /*
      * Create transaction.
      */
