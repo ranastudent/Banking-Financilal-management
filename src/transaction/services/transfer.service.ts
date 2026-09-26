@@ -17,6 +17,64 @@ type LockedAccount = {
   status: string;
 };
 
+/*
+ * ============================================================
+ * TEST-ONLY FAILURE INJECTION
+ * ============================================================
+ *
+ * These stages are used by Phase 14.13 to verify that the
+ * complete database transaction rolls back when a failure
+ * occurs after different mutations.
+ *
+ * IMPORTANT:
+ * This mechanism is active ONLY when NODE_ENV is "test"
+ * or when Vitest is running.
+ *
+ * Production behavior is unchanged.
+ * ============================================================
+ */
+
+type TransferFailureStage =
+  | "AFTER_SENDER_DEBIT"
+  | "AFTER_RECEIVER_CREDIT"
+  | "AFTER_TRANSACTION_CREATION"
+  | "AFTER_FIRST_LEDGER_ENTRY"
+  | "AFTER_SECOND_LEDGER_ENTRY"
+  | "AFTER_AUDIT_CREATION";
+
+const throwIfTransferTestFailure = (
+  stage: TransferFailureStage,
+): void => {
+  /*
+   * Never inject failures outside the test environment.
+   */
+  const isTestEnvironment =
+    process.env.NODE_ENV === "test" ||
+    process.env.VITEST === "true";
+
+  if (!isTestEnvironment) {
+    return;
+  }
+
+  /*
+   * Read the requested failure stage.
+   */
+  const configuredStage =
+    process.env.TRANSFER_TEST_FAILURE_STAGE;
+
+  /*
+   * Only throw when the current execution point
+   * matches the requested test failure stage.
+   */
+  if (configuredStage === stage) {
+    throw new AppError(
+      `Test failure at transfer stage: ${stage}`,
+      500,
+      ErrorCode.INTERNAL_SERVER_ERROR,
+    );
+  }
+};
+
 const lockAccount = async (
   tx: Prisma.TransactionClient,
   accountId: string,
@@ -357,7 +415,9 @@ export const prepareTransfer = async (
     }
 
     /*
-     * Debit sender.
+     * ========================================================
+     * 1. Debit sender.
+     * ========================================================
      */
     const senderAfter = await updateBalance(
       tx,
@@ -367,7 +427,26 @@ export const prepareTransfer = async (
     );
 
     /*
-     * Credit receiver.
+     * 14.13.1
+     *
+     * Deliberately fail immediately after sender debit.
+     *
+     * Expected:
+     * - sender balance rolls back
+     * - receiver remains unchanged
+     * - no transaction
+     * - no ledger
+     * - no transaction legs
+     * - no audit log
+     */
+    throwIfTransferTestFailure(
+      "AFTER_SENDER_DEBIT",
+    );
+
+    /*
+     * ========================================================
+     * 2. Credit receiver.
+     * ========================================================
      */
     const receiverAfter = await updateBalance(
       tx,
@@ -376,27 +455,19 @@ export const prepareTransfer = async (
       "credit",
     );
 
-    // ============================================================
-    // TEST-ONLY FAILURE INJECTION
-    // Used by 14.6.1.c to verify transaction rollback
-    // after debit + credit have already occurred.
-    // ============================================================
-
-    if (
-      (process.env.NODE_ENV === "test" ||
-        process.env.VITEST === "true") &&
-      process.env.TRANSFER_TEST_FAILURE_AFTER_MUTATION ===
-        "true"
-    ) {
-      throw new AppError(
-        "Test failure after balance mutation",
-        500,
-        ErrorCode.INTERNAL_SERVER_ERROR,
-      );
-    }
+    /*
+     * 14.13.2
+     *
+     * Deliberately fail after both balance mutations.
+     */
+    throwIfTransferTestFailure(
+      "AFTER_RECEIVER_CREDIT",
+    );
 
     /*
-     * Create transaction.
+     * ========================================================
+     * 3. Create transaction.
+     * ========================================================
      */
     const transaction = await tx.transaction.create({
       data: {
@@ -427,11 +498,26 @@ export const prepareTransfer = async (
     });
 
     /*
-     * Create sender DEBIT and receiver CREDIT
-     * ledger entries.
+     * 14.13.3
+     *
+     * Deliberately fail after transaction creation.
      */
-    const ledgerEntries = await Promise.all([
-      tx.ledgerEntry.create({
+    throwIfTransferTestFailure(
+      "AFTER_TRANSACTION_CREATION",
+    );
+
+    /*
+     * ========================================================
+     * 4. Create sender DEBIT ledger entry.
+     * ========================================================
+     *
+     * IMPORTANT:
+     * These are intentionally sequential rather than Promise.all()
+     * because Phase 14.13 needs a failure point after the first
+     * ledger entry and another after the second ledger entry.
+     */
+    const senderLedgerEntry =
+      await tx.ledgerEntry.create({
         data: {
           transactionId: transaction.id,
           accountId: sender.id,
@@ -452,9 +538,24 @@ export const prepareTransfer = async (
           balanceAfter: true,
           createdAt: true,
         },
-      }),
+      });
 
-      tx.ledgerEntry.create({
+    /*
+     * 14.13.4
+     *
+     * Deliberately fail after the first ledger entry.
+     */
+    throwIfTransferTestFailure(
+      "AFTER_FIRST_LEDGER_ENTRY",
+    );
+
+    /*
+     * ========================================================
+     * 5. Create receiver CREDIT ledger entry.
+     * ========================================================
+     */
+    const receiverLedgerEntry =
+      await tx.ledgerEntry.create({
         data: {
           transactionId: transaction.id,
           accountId: receiver.id,
@@ -475,11 +576,21 @@ export const prepareTransfer = async (
           balanceAfter: true,
           createdAt: true,
         },
-      }),
-    ]);
+      });
 
     /*
-     * Create transaction legs.
+     * 14.13.5
+     *
+     * Deliberately fail after the second ledger entry.
+     */
+    throwIfTransferTestFailure(
+      "AFTER_SECOND_LEDGER_ENTRY",
+    );
+
+    /*
+     * ========================================================
+     * 6. Create transaction legs.
+     * ========================================================
      */
     await tx.transactionLeg.createMany({
       data: [
@@ -501,8 +612,12 @@ export const prepareTransfer = async (
     });
 
     /*
-     * Create audit log inside the same
-     * database transaction.
+     * ========================================================
+     * 7. Create audit log.
+     * ========================================================
+     *
+     * The audit log is intentionally created using the same
+     * Prisma transaction client.
      */
     const auditLog = await tx.auditLog.create({
       data: {
@@ -534,6 +649,18 @@ export const prepareTransfer = async (
       },
     });
 
+    /*
+     * 14.13.6
+     *
+     * Deliberately fail AFTER the audit record exists.
+     *
+     * Because this audit record belongs to the same
+     * prisma.$transaction(), it must also be rolled back.
+     */
+    throwIfTransferTestFailure(
+      "AFTER_AUDIT_CREATION",
+    );
+
     return {
       transaction: {
         ...transaction,
@@ -564,16 +691,26 @@ export const prepareTransfer = async (
           receiverAfter.availableBalance.toString(),
       },
 
-      ledgerEntries:
-        ledgerEntries.map((entry) => ({
-          ...entry,
+      ledgerEntries: [
+        {
+          ...senderLedgerEntry,
           amount:
-            entry.amount.toString(),
+            senderLedgerEntry.amount.toString(),
           balanceBefore:
-            entry.balanceBefore.toString(),
+            senderLedgerEntry.balanceBefore.toString(),
           balanceAfter:
-            entry.balanceAfter.toString(),
-        })),
+            senderLedgerEntry.balanceAfter.toString(),
+        },
+        {
+          ...receiverLedgerEntry,
+          amount:
+            receiverLedgerEntry.amount.toString(),
+          balanceBefore:
+            receiverLedgerEntry.balanceBefore.toString(),
+          balanceAfter:
+            receiverLedgerEntry.balanceAfter.toString(),
+        },
+      ],
 
       auditLog,
     };
