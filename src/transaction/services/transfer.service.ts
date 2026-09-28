@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 
 import { Prisma } from "@prisma/client";
 
@@ -19,18 +20,53 @@ type LockedAccount = {
 
 /*
  * ============================================================
- * TEST-ONLY FAILURE INJECTION
+ * PERFORMANCE DEBUGGING
  * ============================================================
  *
- * These stages are used by Phase 14.13 to verify that the
- * complete database transaction rolls back when a failure
- * occurs after different mutations.
+ * Enable with:
  *
- * IMPORTANT:
- * This mechanism is active ONLY when NODE_ENV is "test"
- * or when Vitest is running.
+ * TRANSFER_PERF_DEBUG=true
  *
- * Production behavior is unchanged.
+ * This is diagnostic instrumentation only.
+ *
+ * It does NOT change:
+ * - transaction behavior
+ * - locking behavior
+ * - financial calculations
+ * - rollback behavior
+ * - authorization
+ *
+ * It helps identify where high-concurrency transfers spend time.
+ * ============================================================
+ */
+
+const isTransferPerfDebugEnabled = (): boolean => {
+  return process.env.TRANSFER_PERF_DEBUG === "true";
+};
+
+const perfLog = (
+  message: string,
+  metadata?: Record<string, unknown>,
+): void => {
+  if (!isTransferPerfDebugEnabled()) {
+    return;
+  }
+
+  if (metadata) {
+    console.log(
+      `[TRANSFER-PERF] ${message}`,
+      JSON.stringify(metadata),
+    );
+
+    return;
+  }
+
+  console.log(`[TRANSFER-PERF] ${message}`);
+};
+
+/*
+ * ============================================================
+ * TEST-ONLY FAILURE INJECTION
  * ============================================================
  */
 
@@ -45,9 +81,6 @@ type TransferFailureStage =
 const throwIfTransferTestFailure = (
   stage: TransferFailureStage,
 ): void => {
-  /*
-   * Never inject failures outside the test environment.
-   */
   const isTestEnvironment =
     process.env.NODE_ENV === "test" ||
     process.env.VITEST === "true";
@@ -56,16 +89,9 @@ const throwIfTransferTestFailure = (
     return;
   }
 
-  /*
-   * Read the requested failure stage.
-   */
   const configuredStage =
     process.env.TRANSFER_TEST_FAILURE_STAGE;
 
-  /*
-   * Only throw when the current execution point
-   * matches the requested test failure stage.
-   */
   if (configuredStage === stage) {
     throw new AppError(
       `Test failure at transfer stage: ${stage}`,
@@ -75,10 +101,18 @@ const throwIfTransferTestFailure = (
   }
 };
 
+/*
+ * ============================================================
+ * ACCOUNT LOCK
+ * ============================================================
+ */
+
 const lockAccount = async (
   tx: Prisma.TransactionClient,
   accountId: string,
 ): Promise<LockedAccount> => {
+  const lockStart = performance.now();
+
   const rows = await tx.$queryRaw<LockedAccount[]>`
     SELECT
       id,
@@ -90,6 +124,13 @@ const lockAccount = async (
     WHERE id = CAST(${accountId} AS uuid)
     FOR UPDATE
   `;
+
+  const lockDuration = performance.now() - lockStart;
+
+  perfLog("account lock completed", {
+    accountId,
+    durationMs: Number(lockDuration.toFixed(2)),
+  });
 
   const account = rows[0];
 
@@ -104,10 +145,18 @@ const lockAccount = async (
   return account;
 };
 
+/*
+ * ============================================================
+ * ACCOUNT RESOLUTION
+ * ============================================================
+ */
+
 const getAccountId = async (
   tx: Prisma.TransactionClient,
   accountNumber: string,
 ): Promise<string> => {
+  const lookupStart = performance.now();
+
   const account = await tx.account.findUnique({
     where: {
       accountNumber,
@@ -115,6 +164,13 @@ const getAccountId = async (
     select: {
       id: true,
     },
+  });
+
+  perfLog("account lookup completed", {
+    accountNumber,
+    durationMs: Number(
+      (performance.now() - lookupStart).toFixed(2),
+    ),
   });
 
   if (!account) {
@@ -128,12 +184,20 @@ const getAccountId = async (
   return account.id;
 };
 
+/*
+ * ============================================================
+ * BALANCE READ
+ * ============================================================
+ */
+
 const getBalance = async (
   tx: Prisma.TransactionClient,
   accountId: string,
   currencyCode: string,
 ) => {
-  return tx.accountBalance.findUnique({
+  const balanceStart = performance.now();
+
+  const balance = await tx.accountBalance.findUnique({
     where: {
       accountId_currencyCode: {
         accountId,
@@ -146,12 +210,31 @@ const getBalance = async (
       lockedBalance: true,
     },
   });
+
+  perfLog("balance lookup completed", {
+    accountId,
+    currencyCode,
+    found: Boolean(balance),
+    durationMs: Number(
+      (performance.now() - balanceStart).toFixed(2),
+    ),
+  });
+
+  return balance;
 };
+
+/*
+ * ============================================================
+ * CURRENCY VALIDATION
+ * ============================================================
+ */
 
 const validateCurrency = async (
   tx: Prisma.TransactionClient,
   currencyCode: string,
 ) => {
+  const currencyStart = performance.now();
+
   const currency = await tx.currency.findUnique({
     where: {
       code: currencyCode,
@@ -163,6 +246,14 @@ const validateCurrency = async (
       decimalPlaces: true,
       isActive: true,
     },
+  });
+
+  perfLog("currency validation completed", {
+    currencyCode,
+    found: Boolean(currency),
+    durationMs: Number(
+      (performance.now() - currencyStart).toFixed(2),
+    ),
   });
 
   if (!currency) {
@@ -184,12 +275,20 @@ const validateCurrency = async (
   return currency;
 };
 
+/*
+ * ============================================================
+ * BALANCE UPDATE
+ * ============================================================
+ */
+
 const updateBalance = async (
   tx: Prisma.TransactionClient,
   balanceId: string,
   amount: Prisma.Decimal,
   operation: "debit" | "credit",
 ) => {
+  const updateStart = performance.now();
+
   const updated = await tx.accountBalance.updateMany({
     where: {
       id: balanceId,
@@ -244,484 +343,781 @@ const updateBalance = async (
     );
   }
 
+  perfLog(`balance ${operation} completed`, {
+    balanceId,
+    amount: amount.toString(),
+    durationMs: Number(
+      (performance.now() - updateStart).toFixed(2),
+    ),
+  });
+
   return balance;
 };
+
+/*
+ * ============================================================
+ * MAIN TRANSFER
+ * ============================================================
+ */
 
 export const prepareTransfer = async (
   user: AuthUser,
   input: TransferInput,
 ) => {
-  const amount = new Prisma.Decimal(
-    input.amount,
-  );
+  const amount = new Prisma.Decimal(input.amount);
 
-  return prisma.$transaction(async (tx) => {
-    /*
-     * Resolve account numbers to account IDs.
-     */
-    const senderId = await getAccountId(
-      tx,
-      input.senderAccount,
-    );
+  /*
+   * Unique ID for correlating performance logs belonging
+   * to the same transfer execution.
+   */
+  const perfTransferId = randomUUID();
 
-    const receiverId = await getAccountId(
-      tx,
-      input.receiverAccount,
-    );
+  /*
+   * IMPORTANT:
+   *
+   * This timestamp is taken BEFORE calling prisma.$transaction().
+   *
+   * Therefore:
+   *
+   * transactionCallDuration =
+   *   time spent waiting for Prisma to start/acquire
+   *   the interactive transaction
+   *
+   * This is especially important for diagnosing P2028.
+   */
+  const transactionCallStart = performance.now();
 
-    /*
-     * Sender and receiver cannot be the same account.
-     */
-    if (senderId === receiverId) {
-      throw new AppError(
-        "Sender and receiver accounts must be different",
-        400,
-        ErrorCode.BAD_REQUEST,
-      );
-    }
+  perfLog("transaction requested", {
+    perfTransferId,
+    senderAccount: input.senderAccount,
+    receiverAccount: input.receiverAccount,
+    amount: amount.toString(),
+    currency: input.currency,
+  });
 
-    /*
-     * Lock both accounts in deterministic order.
-     *
-     * This reduces deadlock risk when:
-     * A -> B
-     * B -> A
-     */
-    const orderedIds = [
-      senderId,
-      receiverId,
-    ].sort();
+  try {
+    const result = await prisma.$transaction(
+      async (tx) => {
+        /*
+         * ====================================================
+         * TRANSACTION CALLBACK START
+         * ====================================================
+         *
+         * If a P2028 happens before this line, the callback
+         * will never execute.
+         *
+         * That allows us to distinguish transaction-start
+         * contention from work inside the transaction.
+         */
 
-    const lockedAccounts = await Promise.all(
-      orderedIds.map((id) =>
-        lockAccount(tx, id),
-      ),
-    );
+        const transactionCallbackStart =
+          performance.now();
 
-    const sender = lockedAccounts.find(
-      (account) => account.id === senderId,
-    );
+        perfLog("transaction callback started", {
+          perfTransferId,
+          waitBeforeCallbackMs: Number(
+            (
+              transactionCallbackStart -
+              transactionCallStart
+            ).toFixed(2),
+          ),
+        });
 
-    const receiver = lockedAccounts.find(
-      (account) => account.id === receiverId,
-    );
+        /*
+         * ====================================================
+         * 1. RESOLVE ACCOUNTS
+         * ====================================================
+         */
 
-    if (!sender || !receiver) {
-      throw new AppError(
-        "Transfer accounts could not be locked",
-        500,
-        ErrorCode.INTERNAL_SERVER_ERROR,
-      );
-    }
+        const accountResolutionStart =
+          performance.now();
 
-    /*
-     * Authorization.
-     */
-    if (
-      user.role === "CUSTOMER" &&
-      sender.user_id !== user.id
-    ) {
-      throw new AppError(
-        "You do not have permission to transfer from this account",
-        403,
-        ErrorCode.FORBIDDEN,
-      );
-    }
+        const senderId = await getAccountId(
+          tx,
+          input.senderAccount,
+        );
 
-    if (
-      user.role !== "CUSTOMER" &&
-      user.role !== "ADMIN"
-    ) {
-      throw new AppError(
-        "You do not have permission to perform a fund transfer",
-        403,
-        ErrorCode.FORBIDDEN,
-      );
-    }
+        const receiverId = await getAccountId(
+          tx,
+          input.receiverAccount,
+        );
 
-    /*
-     * Both accounts must be active.
-     */
-    if (sender.status !== "ACTIVE") {
-      throw new AppError(
-        "Sender account is not active",
-        409,
-        ErrorCode.CONFLICT,
-      );
-    }
+        perfLog("account resolution completed", {
+          perfTransferId,
+          durationMs: Number(
+            (
+              performance.now() -
+              accountResolutionStart
+            ).toFixed(2),
+          ),
+        });
 
-    if (receiver.status !== "ACTIVE") {
-      throw new AppError(
-        "Receiver account is not active",
-        409,
-        ErrorCode.CONFLICT,
-      );
-    }
+        /*
+         * Sender and receiver cannot be the same account.
+         */
 
-    /*
-     * Phase 14:
-     * Same-currency transfer only.
-     */
-    const currency = await validateCurrency(
-      tx,
-      input.currency,
-    );
+        if (senderId === receiverId) {
+          throw new AppError(
+            "Sender and receiver accounts must be different",
+            400,
+            ErrorCode.BAD_REQUEST,
+          );
+        }
 
-    /*
-     * Get sender and receiver balance
-     * for the requested currency.
-     */
-    const senderBalance = await getBalance(
-      tx,
-      sender.id,
-      currency.code,
-    );
+        /*
+         * ====================================================
+         * 2. LOCK ACCOUNTS
+         * ====================================================
+         *
+         * Locks are acquired in deterministic order.
+         *
+         * A -> B
+         * B -> A
+         *
+         * both become:
+         *
+         * smaller UUID -> larger UUID
+         *
+         * This reduces deadlock risk.
+         */
 
-    const receiverBalance = await getBalance(
-      tx,
-      receiver.id,
-      currency.code,
-    );
+        const accountLockStart =
+          performance.now();
 
-    if (!senderBalance) {
-      throw new AppError(
-        `Sender does not have a ${currency.code} balance`,
-        409,
-        ErrorCode.CONFLICT,
-      );
-    }
+        const orderedIds = [
+          senderId,
+          receiverId,
+        ].sort();
 
-    if (!receiverBalance) {
-      throw new AppError(
-        `Receiver does not have a ${currency.code} balance`,
-        409,
-        ErrorCode.CONFLICT,
-      );
-    }
+        const lockedAccounts = await Promise.all(
+          orderedIds.map((id) =>
+            lockAccount(tx, id),
+          ),
+        );
 
-    /*
-     * Check sender balance.
-     */
-    if (
-      senderBalance.availableBalance.lt(
-        amount,
-      )
-    ) {
-      throw new AppError(
-        "Insufficient balance",
-        409,
-        ErrorCode.INSUFFICIENT_BALANCE,
-      );
-    }
+        perfLog("both account locks completed", {
+          perfTransferId,
+          durationMs: Number(
+            (
+              performance.now() -
+              accountLockStart
+            ).toFixed(2),
+          ),
+        });
 
-    /*
-     * ========================================================
-     * 1. Debit sender.
-     * ========================================================
-     */
-    const senderAfter = await updateBalance(
-      tx,
-      senderBalance.id,
-      amount,
-      "debit",
-    );
+        const sender = lockedAccounts.find(
+          (account) => account.id === senderId,
+        );
 
-    /*
-     * 14.13.1
-     *
-     * Deliberately fail immediately after sender debit.
-     *
-     * Expected:
-     * - sender balance rolls back
-     * - receiver remains unchanged
-     * - no transaction
-     * - no ledger
-     * - no transaction legs
-     * - no audit log
-     */
-    throwIfTransferTestFailure(
-      "AFTER_SENDER_DEBIT",
-    );
+        const receiver = lockedAccounts.find(
+          (account) => account.id === receiverId,
+        );
 
-    /*
-     * ========================================================
-     * 2. Credit receiver.
-     * ========================================================
-     */
-    const receiverAfter = await updateBalance(
-      tx,
-      receiverBalance.id,
-      amount,
-      "credit",
-    );
+        if (!sender || !receiver) {
+          throw new AppError(
+            "Transfer accounts could not be locked",
+            500,
+            ErrorCode.INTERNAL_SERVER_ERROR,
+          );
+        }
 
-    /*
-     * 14.13.2
-     *
-     * Deliberately fail after both balance mutations.
-     */
-    throwIfTransferTestFailure(
-      "AFTER_RECEIVER_CREDIT",
-    );
+        /*
+         * ====================================================
+         * 3. AUTHORIZATION
+         * ====================================================
+         */
 
-    /*
-     * ========================================================
-     * 3. Create transaction.
-     * ========================================================
-     */
-    const transaction = await tx.transaction.create({
-      data: {
-        reference: `TRF-${randomUUID()}`,
-        type: "INTERNAL_TRANSFER",
-        status: "COMPLETED",
-        amount,
-        currencyCode: currency.code,
-        sourceAccountId: sender.id,
-        destinationAccountId: receiver.id,
-        provider: "INTERNAL",
-        metadata: {
-          operation: "INTERNAL_FUND_TRANSFER",
-        },
-      },
-      select: {
-        id: true,
-        reference: true,
-        type: true,
-        status: true,
-        amount: true,
-        currencyCode: true,
-        sourceAccountId: true,
-        destinationAccountId: true,
-        provider: true,
-        createdAt: true,
-      },
-    });
+        const authorizationStart =
+          performance.now();
 
-    /*
-     * 14.13.3
-     *
-     * Deliberately fail after transaction creation.
-     */
-    throwIfTransferTestFailure(
-      "AFTER_TRANSACTION_CREATION",
-    );
+        if (
+          user.role === "CUSTOMER" &&
+          sender.user_id !== user.id
+        ) {
+          throw new AppError(
+            "You do not have permission to transfer from this account",
+            403,
+            ErrorCode.FORBIDDEN,
+          );
+        }
 
-    /*
-     * ========================================================
-     * 4. Create sender DEBIT ledger entry.
-     * ========================================================
-     *
-     * IMPORTANT:
-     * These are intentionally sequential rather than Promise.all()
-     * because Phase 14.13 needs a failure point after the first
-     * ledger entry and another after the second ledger entry.
-     */
-    const senderLedgerEntry =
-      await tx.ledgerEntry.create({
-        data: {
-          transactionId: transaction.id,
-          accountId: sender.id,
-          currencyCode: currency.code,
-          entryType: "DEBIT",
+        if (
+          user.role !== "CUSTOMER" &&
+          user.role !== "ADMIN"
+        ) {
+          throw new AppError(
+            "You do not have permission to perform a fund transfer",
+            403,
+            ErrorCode.FORBIDDEN,
+          );
+        }
+
+        perfLog("authorization completed", {
+          perfTransferId,
+          durationMs: Number(
+            (
+              performance.now() -
+              authorizationStart
+            ).toFixed(2),
+          ),
+        });
+
+        /*
+         * ====================================================
+         * 4. ACCOUNT STATUS
+         * ====================================================
+         */
+
+        if (sender.status !== "ACTIVE") {
+          throw new AppError(
+            "Sender account is not active",
+            409,
+            ErrorCode.CONFLICT,
+          );
+        }
+
+        if (receiver.status !== "ACTIVE") {
+          throw new AppError(
+            "Receiver account is not active",
+            409,
+            ErrorCode.CONFLICT,
+          );
+        }
+
+        /*
+         * ====================================================
+         * 5. CURRENCY
+         * ====================================================
+         */
+
+        const currency = await validateCurrency(
+          tx,
+          input.currency,
+        );
+
+        /*
+         * ====================================================
+         * 6. BALANCES
+         * ====================================================
+         */
+
+        const balanceReadStart =
+          performance.now();
+
+        const senderBalance = await getBalance(
+          tx,
+          sender.id,
+          currency.code,
+        );
+
+        const receiverBalance = await getBalance(
+          tx,
+          receiver.id,
+          currency.code,
+        );
+
+        perfLog("both balances loaded", {
+          perfTransferId,
+          durationMs: Number(
+            (
+              performance.now() -
+              balanceReadStart
+            ).toFixed(2),
+          ),
+        });
+
+        if (!senderBalance) {
+          throw new AppError(
+            `Sender does not have a ${currency.code} balance`,
+            409,
+            ErrorCode.CONFLICT,
+          );
+        }
+
+        if (!receiverBalance) {
+          throw new AppError(
+            `Receiver does not have a ${currency.code} balance`,
+            409,
+            ErrorCode.CONFLICT,
+          );
+        }
+
+        /*
+         * ====================================================
+         * 7. BALANCE CHECK
+         * ====================================================
+         */
+
+        if (
+          senderBalance.availableBalance.lt(
+            amount,
+          )
+        ) {
+          throw new AppError(
+            "Insufficient balance",
+            409,
+            ErrorCode.INSUFFICIENT_BALANCE,
+          );
+        }
+
+        /*
+         * ====================================================
+         * 8. DEBIT SENDER
+         * ====================================================
+         */
+
+        const debitStart =
+          performance.now();
+
+        const senderAfter = await updateBalance(
+          tx,
+          senderBalance.id,
           amount,
-          balanceBefore:
-            senderBalance.availableBalance,
-          balanceAfter:
-            senderAfter.availableBalance,
-        },
-        select: {
-          id: true,
-          accountId: true,
-          entryType: true,
-          amount: true,
-          balanceBefore: true,
-          balanceAfter: true,
-          createdAt: true,
-        },
-      });
+          "debit",
+        );
 
-    /*
-     * 14.13.4
-     *
-     * Deliberately fail after the first ledger entry.
-     */
-    throwIfTransferTestFailure(
-      "AFTER_FIRST_LEDGER_ENTRY",
-    );
+        perfLog("sender debit completed", {
+          perfTransferId,
+          durationMs: Number(
+            (
+              performance.now() -
+              debitStart
+            ).toFixed(2),
+          ),
+        });
 
-    /*
-     * ========================================================
-     * 5. Create receiver CREDIT ledger entry.
-     * ========================================================
-     */
-    const receiverLedgerEntry =
-      await tx.ledgerEntry.create({
-        data: {
-          transactionId: transaction.id,
-          accountId: receiver.id,
-          currencyCode: currency.code,
-          entryType: "CREDIT",
+        throwIfTransferTestFailure(
+          "AFTER_SENDER_DEBIT",
+        );
+
+        /*
+         * ====================================================
+         * 9. CREDIT RECEIVER
+         * ====================================================
+         */
+
+        const creditStart =
+          performance.now();
+
+        const receiverAfter = await updateBalance(
+          tx,
+          receiverBalance.id,
           amount,
-          balanceBefore:
-            receiverBalance.availableBalance,
-          balanceAfter:
-            receiverAfter.availableBalance,
-        },
-        select: {
-          id: true,
-          accountId: true,
-          entryType: true,
-          amount: true,
-          balanceBefore: true,
-          balanceAfter: true,
-          createdAt: true,
-        },
-      });
+          "credit",
+        );
 
-    /*
-     * 14.13.5
-     *
-     * Deliberately fail after the second ledger entry.
-     */
-    throwIfTransferTestFailure(
-      "AFTER_SECOND_LEDGER_ENTRY",
-    );
+        perfLog("receiver credit completed", {
+          perfTransferId,
+          durationMs: Number(
+            (
+              performance.now() -
+              creditStart
+            ).toFixed(2),
+          ),
+        });
 
-    /*
-     * ========================================================
-     * 6. Create transaction legs.
-     * ========================================================
-     */
-    await tx.transactionLeg.createMany({
-      data: [
-        {
+        throwIfTransferTestFailure(
+          "AFTER_RECEIVER_CREDIT",
+        );
+
+        /*
+         * ====================================================
+         * 10. CREATE TRANSACTION
+         * ====================================================
+         */
+
+        const transactionCreateStart =
+          performance.now();
+
+        const transaction =
+          await tx.transaction.create({
+            data: {
+              reference: `TRF-${randomUUID()}`,
+              type: "INTERNAL_TRANSFER",
+              status: "COMPLETED",
+              amount,
+              currencyCode: currency.code,
+              sourceAccountId: sender.id,
+              destinationAccountId: receiver.id,
+              provider: "INTERNAL",
+              metadata: {
+                operation:
+                  "INTERNAL_FUND_TRANSFER",
+              },
+            },
+            select: {
+              id: true,
+              reference: true,
+              type: true,
+              status: true,
+              amount: true,
+              currencyCode: true,
+              sourceAccountId: true,
+              destinationAccountId: true,
+              provider: true,
+              createdAt: true,
+            },
+          });
+
+        perfLog("transaction record created", {
+          perfTransferId,
           transactionId: transaction.id,
-          accountId: sender.id,
-          currencyCode: currency.code,
-          entryType: "DEBIT",
-          amount,
-        },
-        {
-          transactionId: transaction.id,
-          accountId: receiver.id,
-          currencyCode: currency.code,
-          entryType: "CREDIT",
-          amount,
-        },
-      ],
-    });
+          durationMs: Number(
+            (
+              performance.now() -
+              transactionCreateStart
+            ).toFixed(2),
+          ),
+        });
 
-    /*
-     * ========================================================
-     * 7. Create audit log.
-     * ========================================================
-     *
-     * The audit log is intentionally created using the same
-     * Prisma transaction client.
-     */
-    const auditLog = await tx.auditLog.create({
-      data: {
-        userId: user.id,
-        action: "TRANSFER_CREATED",
-        entityType: "TRANSACTION",
-        entityId: transaction.id,
-        description:
-          `Fund transfer ${transaction.reference} created from ` +
-          `${sender.account_number} to ` +
-          `${receiver.account_number}`,
-        metadata: {
-          operation: "INTERNAL_FUND_TRANSFER",
+        throwIfTransferTestFailure(
+          "AFTER_TRANSACTION_CREATION",
+        );
+
+        /*
+         * ====================================================
+         * 11. SENDER LEDGER ENTRY
+         * ====================================================
+         */
+
+        const senderLedgerStart =
+          performance.now();
+
+        const senderLedgerEntry =
+          await tx.ledgerEntry.create({
+            data: {
+              transactionId: transaction.id,
+              accountId: sender.id,
+              currencyCode: currency.code,
+              entryType: "DEBIT",
+              amount,
+              balanceBefore:
+                senderBalance.availableBalance,
+              balanceAfter:
+                senderAfter.availableBalance,
+            },
+            select: {
+              id: true,
+              accountId: true,
+              entryType: true,
+              amount: true,
+              balanceBefore: true,
+              balanceAfter: true,
+              createdAt: true,
+            },
+          });
+
+        perfLog("sender ledger entry created", {
+          perfTransferId,
+          durationMs: Number(
+            (
+              performance.now() -
+              senderLedgerStart
+            ).toFixed(2),
+          ),
+        });
+
+        throwIfTransferTestFailure(
+          "AFTER_FIRST_LEDGER_ENTRY",
+        );
+
+        /*
+         * ====================================================
+         * 12. RECEIVER LEDGER ENTRY
+         * ====================================================
+         */
+
+        const receiverLedgerStart =
+          performance.now();
+
+        const receiverLedgerEntry =
+          await tx.ledgerEntry.create({
+            data: {
+              transactionId: transaction.id,
+              accountId: receiver.id,
+              currencyCode: currency.code,
+              entryType: "CREDIT",
+              amount,
+              balanceBefore:
+                receiverBalance.availableBalance,
+              balanceAfter:
+                receiverAfter.availableBalance,
+            },
+            select: {
+              id: true,
+              accountId: true,
+              entryType: true,
+              amount: true,
+              balanceBefore: true,
+              balanceAfter: true,
+              createdAt: true,
+            },
+          });
+
+        perfLog(
+          "receiver ledger entry created",
+          {
+            perfTransferId,
+            durationMs: Number(
+              (
+                performance.now() -
+                receiverLedgerStart
+              ).toFixed(2),
+            ),
+          },
+        );
+
+        throwIfTransferTestFailure(
+          "AFTER_SECOND_LEDGER_ENTRY",
+        );
+
+        /*
+         * ====================================================
+         * 13. TRANSACTION LEGS
+         * ====================================================
+         */
+
+        const transactionLegStart =
+          performance.now();
+
+        await tx.transactionLeg.createMany({
+          data: [
+            {
+              transactionId: transaction.id,
+              accountId: sender.id,
+              currencyCode: currency.code,
+              entryType: "DEBIT",
+              amount,
+            },
+            {
+              transactionId: transaction.id,
+              accountId: receiver.id,
+              currencyCode: currency.code,
+              entryType: "CREDIT",
+              amount,
+            },
+          ],
+        });
+
+        perfLog(
+          "transaction legs created",
+          {
+            perfTransferId,
+            durationMs: Number(
+              (
+                performance.now() -
+                transactionLegStart
+              ).toFixed(2),
+            ),
+          },
+        );
+
+        /*
+         * ====================================================
+         * 14. AUDIT LOG
+         * ====================================================
+         */
+
+        const auditStart =
+          performance.now();
+
+        const auditLog =
+          await tx.auditLog.create({
+            data: {
+              userId: user.id,
+              action: "TRANSFER_CREATED",
+              entityType: "TRANSACTION",
+              entityId: transaction.id,
+              description:
+                `Fund transfer ${transaction.reference} created from ` +
+                `${sender.account_number} to ` +
+                `${receiver.account_number}`,
+              metadata: {
+                operation:
+                  "INTERNAL_FUND_TRANSFER",
+                senderAccount:
+                  sender.account_number,
+                receiverAccount:
+                  receiver.account_number,
+                amount: amount.toString(),
+                currencyCode: currency.code,
+                userRole: user.role,
+              },
+            },
+            select: {
+              id: true,
+              action: true,
+              entityType: true,
+              entityId: true,
+              createdAt: true,
+            },
+          });
+
+        perfLog("audit log created", {
+          perfTransferId,
+          durationMs: Number(
+            (
+              performance.now() -
+              auditStart
+            ).toFixed(2),
+          ),
+        });
+
+        throwIfTransferTestFailure(
+          "AFTER_AUDIT_CREATION",
+        );
+
+        /*
+         * ====================================================
+         * TRANSACTION CALLBACK COMPLETED
+         * ====================================================
+         */
+
+        perfLog(
+          "transaction callback completed",
+          {
+            perfTransferId,
+            callbackDurationMs: Number(
+              (
+                performance.now() -
+                transactionCallbackStart
+              ).toFixed(2),
+            ),
+          },
+        );
+
+        /*
+         * ====================================================
+         * RESPONSE DATA
+         * ====================================================
+         */
+
+        return {
+          transaction: {
+            ...transaction,
+            amount:
+              transaction.amount.toString(),
+          },
+
           senderAccount:
             sender.account_number,
+
           receiverAccount:
             receiver.account_number,
-          amount: amount.toString(),
-          currencyCode: currency.code,
-          userRole: user.role,
-        },
-      },
-      select: {
-        id: true,
-        action: true,
-        entityType: true,
-        entityId: true,
-        createdAt: true,
-      },
-    });
 
-    /*
-     * 14.13.6
-     *
-     * Deliberately fail AFTER the audit record exists.
-     *
-     * Because this audit record belongs to the same
-     * prisma.$transaction(), it must also be rolled back.
-     */
-    throwIfTransferTestFailure(
-      "AFTER_AUDIT_CREATION",
+          amount: amount.toString(),
+
+          currency: currency.code,
+
+          balance: {
+            senderBefore:
+              senderBalance.availableBalance.toString(),
+
+            senderAfter:
+              senderAfter.availableBalance.toString(),
+
+            receiverBefore:
+              receiverBalance.availableBalance.toString(),
+
+            receiverAfter:
+              receiverAfter.availableBalance.toString(),
+          },
+
+          ledgerEntries: [
+            {
+              ...senderLedgerEntry,
+              amount:
+                senderLedgerEntry.amount.toString(),
+              balanceBefore:
+                senderLedgerEntry.balanceBefore.toString(),
+              balanceAfter:
+                senderLedgerEntry.balanceAfter.toString(),
+            },
+            {
+              ...receiverLedgerEntry,
+              amount:
+                receiverLedgerEntry.amount.toString(),
+              balanceBefore:
+                receiverLedgerEntry.balanceBefore.toString(),
+              balanceAfter:
+                receiverLedgerEntry.balanceAfter.toString(),
+            },
+          ],
+
+          auditLog,
+        };
+      },
+      {
+        /*
+         * Keep the existing configured transaction
+         * behavior from Prisma configuration.
+         *
+         * This option is intentionally NOT changed here.
+         */
+      },
     );
 
-    return {
-      transaction: {
-        ...transaction,
-        amount: transaction.amount.toString(),
-      },
+    /*
+     * ========================================================
+     * TRANSACTION COMPLETED
+     * ========================================================
+     */
 
-      senderAccount:
-        sender.account_number,
+    perfLog("transaction completed successfully", {
+      perfTransferId,
+      totalTransactionCallDurationMs: Number(
+        (
+          performance.now() -
+          transactionCallStart
+        ).toFixed(2),
+      ),
+    });
 
-      receiverAccount:
-        receiver.account_number,
+    return result;
+  } catch (error) {
+    /*
+     * ========================================================
+     * TRANSACTION FAILED
+     * ========================================================
+     *
+     * This is particularly important for P2028.
+     *
+     * If "transaction callback started" was never logged
+     * for a request, the failure happened while Prisma was
+     * trying to start the interactive transaction.
+     */
 
-      amount: amount.toString(),
+    perfLog("transaction failed", {
+      perfTransferId,
+      totalTransactionCallDurationMs: Number(
+        (
+          performance.now() -
+          transactionCallStart
+        ).toFixed(2),
+      ),
+      errorName:
+        error instanceof Error
+          ? error.name
+          : "UnknownError",
+      errorMessage:
+        error instanceof Error
+          ? error.message
+          : String(error),
+    });
 
-      currency: currency.code,
-
-      balance: {
-        senderBefore:
-          senderBalance.availableBalance.toString(),
-
-        senderAfter:
-          senderAfter.availableBalance.toString(),
-
-        receiverBefore:
-          receiverBalance.availableBalance.toString(),
-
-        receiverAfter:
-          receiverAfter.availableBalance.toString(),
-      },
-
-      ledgerEntries: [
-        {
-          ...senderLedgerEntry,
-          amount:
-            senderLedgerEntry.amount.toString(),
-          balanceBefore:
-            senderLedgerEntry.balanceBefore.toString(),
-          balanceAfter:
-            senderLedgerEntry.balanceAfter.toString(),
-        },
-        {
-          ...receiverLedgerEntry,
-          amount:
-            receiverLedgerEntry.amount.toString(),
-          balanceBefore:
-            receiverLedgerEntry.balanceBefore.toString(),
-          balanceAfter:
-            receiverLedgerEntry.balanceAfter.toString(),
-        },
-      ],
-
-      auditLog,
-    };
-  });
+    throw error;
+  }
 };
 
 /*
- * Legacy authorization-only operation.
+ * ============================================================
+ * LEGACY AUTHORIZATION-ONLY OPERATION
+ * ============================================================
  *
  * Kept for existing authorization regression tests.
+ * ============================================================
  */
+
 export const authorizeTransfer = async (
   sourceAccountId: string,
   destinationAccountId: string,
