@@ -43,7 +43,7 @@ type LockedAccountRow = {
   status: string;
 };
 
-const lockWithdrawalAccount = async (
+const shareLockWithdrawalAccount = async (
   tx: Prisma.TransactionClient,
   accountId: string,
 ): Promise<LockedAccountRow> => {
@@ -58,7 +58,7 @@ const lockWithdrawalAccount = async (
       status
     FROM accounts
     WHERE id = CAST(${accountId} AS uuid)
-    FOR UPDATE
+    FOR SHARE
   `;
 
   const account = accounts[0];
@@ -110,32 +110,46 @@ const validateWithdrawalCurrency = async (
   return currency;
 };
 
+const lockWithdrawalBalance = async (
+  tx: Prisma.TransactionClient,
+  accountId: string,
+  currencyCode: string,
+) => {
+  const rows = await tx.$queryRaw<Array<{
+    id: string;
+    currencyCode: string;
+    availableBalance: Prisma.Decimal;
+    lockedBalance: Prisma.Decimal;
+  }>>`
+    SELECT
+      id,
+      currency_code AS "currencyCode",
+      available_balance AS "availableBalance",
+      locked_balance AS "lockedBalance"
+    FROM account_balances
+    WHERE account_id = CAST(${accountId} AS uuid)
+      AND currency_code = ${currencyCode}
+    FOR UPDATE
+  `;
+
+  return rows[0] ?? null;
+};
+
 /*
  * 13.7
  *
- * Lookup the balance for the exact currency requested
- * by the withdrawal.
+ * Lock the exact balance row before reading financial state.
  */
 const getWithdrawalBalance = async (
   tx: Prisma.TransactionClient,
   accountId: string,
   currencyCode: string,
 ) => {
-  const balance =
-    await tx.accountBalance.findUnique({
-      where: {
-        accountId_currencyCode: {
-          accountId,
-          currencyCode,
-        },
-      },
-      select: {
-        id: true,
-        currencyCode: true,
-        availableBalance: true,
-        lockedBalance: true,
-      },
-    });
+  const balance = await lockWithdrawalBalance(
+    tx,
+    accountId,
+    currencyCode,
+  );
 
   if (!balance) {
     return {
@@ -416,7 +430,7 @@ export const prepareWithdrawal = async (
      * 13.5
      * Lock account before reading financial state.
      */
-    const account = await lockWithdrawalAccount(
+    const account = await shareLockWithdrawalAccount(
       tx,
       accountId,
     );

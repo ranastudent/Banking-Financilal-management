@@ -18,57 +18,30 @@ type LockedAccount = {
   status: string;
 };
 
-/*
- * ============================================================
- * PERFORMANCE DEBUGGING
- * ============================================================
- *
- * Enable with:
- *
- * TRANSFER_PERF_DEBUG=true
- *
- * This is diagnostic instrumentation only.
- *
- * It does NOT change:
- * - transaction behavior
- * - locking behavior
- * - financial calculations
- * - rollback behavior
- * - authorization
- *
- * It helps identify where high-concurrency transfers spend time.
- * ============================================================
- */
-
-const isTransferPerfDebugEnabled = (): boolean => {
-  return process.env.TRANSFER_PERF_DEBUG === "true";
+type LockedBalance = {
+  id: string;
+  accountId: string;
+  availableBalance: Prisma.Decimal;
+  lockedBalance: Prisma.Decimal;
 };
+
+/* Performance logging */
 
 const perfLog = (
   message: string,
   metadata?: Record<string, unknown>,
 ): void => {
-  if (!isTransferPerfDebugEnabled()) {
+  if (process.env.TRANSFER_PERF_DEBUG !== "true") {
     return;
   }
 
-  if (metadata) {
-    console.log(
-      `[TRANSFER-PERF] ${message}`,
-      JSON.stringify(metadata),
-    );
-
-    return;
-  }
-
-  console.log(`[TRANSFER-PERF] ${message}`);
+  console.log(
+    `[TRANSFER-PERF] ${message}`,
+    metadata ? JSON.stringify(metadata) : "",
+  );
 };
 
-/*
- * ============================================================
- * TEST-ONLY FAILURE INJECTION
- * ============================================================
- */
+/* Test failure injection */
 
 type TransferFailureStage =
   | "AFTER_SENDER_DEBIT"
@@ -81,18 +54,14 @@ type TransferFailureStage =
 const throwIfTransferTestFailure = (
   stage: TransferFailureStage,
 ): void => {
-  const isTestEnvironment =
+  const isTest =
     process.env.NODE_ENV === "test" ||
     process.env.VITEST === "true";
 
-  if (!isTestEnvironment) {
-    return;
-  }
-
-  const configuredStage =
-    process.env.TRANSFER_TEST_FAILURE_STAGE;
-
-  if (configuredStage === stage) {
+  if (
+    isTest &&
+    process.env.TRANSFER_TEST_FAILURE_STAGE === stage
+  ) {
     throw new AppError(
       `Test failure at transfer stage: ${stage}`,
       500,
@@ -101,17 +70,13 @@ const throwIfTransferTestFailure = (
   }
 };
 
-/*
- * ============================================================
- * ACCOUNT LOCK
- * ============================================================
- */
+/* Account lock */
 
-const lockAccount = async (
+const lockAccountByNumber = async (
   tx: Prisma.TransactionClient,
-  accountId: string,
+  accountNumber: string,
 ): Promise<LockedAccount> => {
-  const lockStart = performance.now();
+  const start = performance.now();
 
   const rows = await tx.$queryRaw<LockedAccount[]>`
     SELECT
@@ -121,15 +86,15 @@ const lockAccount = async (
       account_type,
       status
     FROM accounts
-    WHERE id = CAST(${accountId} AS uuid)
-    FOR UPDATE
+    WHERE account_number = ${accountNumber}
+    FOR SHARE
   `;
 
-  const lockDuration = performance.now() - lockStart;
-
-  perfLog("account lock completed", {
-    accountId,
-    durationMs: Number(lockDuration.toFixed(2)),
+  perfLog("account share lock completed", {
+    accountNumber,
+    durationMs: Number(
+      (performance.now() - start).toFixed(2),
+    ),
   });
 
   const account = rows[0];
@@ -145,100 +110,119 @@ const lockAccount = async (
   return account;
 };
 
-/*
- * ============================================================
- * ACCOUNT RESOLUTION
- * ============================================================
- */
+/* Stage 2H-B: single-query balance locking */
 
-const getAccountId = async (
+const lockBalances = async (
   tx: Prisma.TransactionClient,
-  accountNumber: string,
-): Promise<string> => {
-  const lookupStart = performance.now();
+  accountIds: string[],
+  currencyCode: string,
+): Promise<Map<string, LockedBalance>> => {
+  const orderedIds = [...accountIds].sort();
 
-  const account = await tx.account.findUnique({
+  const rows = await tx.$queryRaw<LockedBalance[]>`
+    SELECT
+      id,
+      account_id AS "accountId",
+      available_balance AS "availableBalance",
+      locked_balance AS "lockedBalance"
+    FROM account_balances
+    WHERE account_id IN (
+      ${Prisma.join(
+        orderedIds.map(
+          (id) => Prisma.sql`CAST(${id} AS uuid)`,
+        ),
+      )}
+    )
+      AND currency_code = ${currencyCode}
+    ORDER BY account_id ASC
+    FOR UPDATE
+  `;
+
+  return new Map(
+    rows.map((balance) => [
+      balance.accountId,
+      balance,
+    ]),
+  );
+};
+
+/* Stage 2H-A: update already-locked balance */
+
+const updateBalance = async (
+  tx: Prisma.TransactionClient,
+  balance: LockedBalance,
+  amount: Prisma.Decimal,
+  operation: "debit" | "credit",
+): Promise<LockedBalance> => {
+  const start = performance.now();
+
+  const updated = await tx.accountBalance.updateMany({
     where: {
-      accountNumber,
+      id: balance.id,
+      ...(operation === "debit"
+        ? {
+            availableBalance: {
+              gte: amount,
+            },
+          }
+        : {}),
     },
-    select: {
-      id: true,
+    data: {
+      availableBalance:
+        operation === "debit"
+          ? { decrement: amount }
+          : { increment: amount },
     },
   });
 
-  perfLog("account lookup completed", {
-    accountNumber,
-    durationMs: Number(
-      (performance.now() - lookupStart).toFixed(2),
-    ),
-  });
-
-  if (!account) {
+  if (updated.count !== 1) {
     throw new AppError(
-      "Account not found",
-      404,
-      ErrorCode.RESOURCE_NOT_FOUND,
+      operation === "debit"
+        ? "Insufficient balance"
+        : "Receiver balance could not be updated",
+      409,
+      operation === "debit"
+        ? ErrorCode.INSUFFICIENT_BALANCE
+        : ErrorCode.CONFLICT,
     );
   }
 
-  return account.id;
-};
+  const result: LockedBalance = {
+    id: balance.id,
+    accountId: balance.accountId,
+    availableBalance:
+      operation === "debit"
+        ? balance.availableBalance.sub(amount)
+        : balance.availableBalance.add(amount),
+    lockedBalance: balance.lockedBalance,
+  };
 
-/*
- * ============================================================
- * BALANCE READ
- * ============================================================
- */
-
-const getBalance = async (
-  tx: Prisma.TransactionClient,
-  accountId: string,
-  currencyCode: string,
-) => {
-  const balanceStart = performance.now();
-
-  const balance = await tx.accountBalance.findUnique({
-    where: {
-      accountId_currencyCode: {
-        accountId,
-        currencyCode,
-      },
-    },
-    select: {
-      id: true,
-      availableBalance: true,
-      lockedBalance: true,
-    },
-  });
-
-  perfLog("balance lookup completed", {
-    accountId,
-    currencyCode,
-    found: Boolean(balance),
+  perfLog(`balance ${operation} completed`, {
+    balanceId: balance.id,
+    amount: amount.toString(),
     durationMs: Number(
-      (performance.now() - balanceStart).toFixed(2),
+      (performance.now() - start).toFixed(2),
     ),
   });
 
-  return balance;
+  return result;
 };
 
-/*
- * ============================================================
- * CURRENCY VALIDATION
- * ============================================================
- */
+/* Main transfer */
 
-const validateCurrency = async (
-  tx: Prisma.TransactionClient,
-  currencyCode: string,
+export const prepareTransfer = async (
+  user: AuthUser,
+  input: TransferInput,
 ) => {
+  const amount = new Prisma.Decimal(input.amount);
+  const perfTransferId = randomUUID();
+
+  /* Currency validation outside transaction */
+
   const currencyStart = performance.now();
 
-  const currency = await tx.currency.findUnique({
-    where: {
-      code: currencyCode,
-    },
+  const currency = await prisma.currency.findUnique({
+    where: { code: input.currency },
     select: {
       code: true,
       name: true,
@@ -249,8 +233,10 @@ const validateCurrency = async (
   });
 
   perfLog("currency validation completed", {
-    currencyCode,
+    perfTransferId,
+    currencyCode: input.currency,
     found: Boolean(currency),
+    outsideTransaction: true,
     durationMs: Number(
       (performance.now() - currencyStart).toFixed(2),
     ),
@@ -272,119 +258,6 @@ const validateCurrency = async (
     );
   }
 
-  return currency;
-};
-
-/*
- * ============================================================
- * BALANCE UPDATE
- * ============================================================
- */
-
-const updateBalance = async (
-  tx: Prisma.TransactionClient,
-  balanceId: string,
-  amount: Prisma.Decimal,
-  operation: "debit" | "credit",
-) => {
-  const updateStart = performance.now();
-
-  const updated = await tx.accountBalance.updateMany({
-    where: {
-      id: balanceId,
-      ...(operation === "debit"
-        ? {
-            availableBalance: {
-              gte: amount,
-            },
-          }
-        : {}),
-    },
-    data: {
-      availableBalance:
-        operation === "debit"
-          ? {
-              decrement: amount,
-            }
-          : {
-              increment: amount,
-            },
-    },
-  });
-
-  if (updated.count !== 1) {
-    throw new AppError(
-      operation === "debit"
-        ? "Insufficient balance"
-        : "Receiver balance could not be updated",
-      409,
-      operation === "debit"
-        ? ErrorCode.INSUFFICIENT_BALANCE
-        : ErrorCode.CONFLICT,
-    );
-  }
-
-  const balance = await tx.accountBalance.findUnique({
-    where: {
-      id: balanceId,
-    },
-    select: {
-      id: true,
-      availableBalance: true,
-      lockedBalance: true,
-    },
-  });
-
-  if (!balance) {
-    throw new AppError(
-      "Balance record not found",
-      404,
-      ErrorCode.RESOURCE_NOT_FOUND,
-    );
-  }
-
-  perfLog(`balance ${operation} completed`, {
-    balanceId,
-    amount: amount.toString(),
-    durationMs: Number(
-      (performance.now() - updateStart).toFixed(2),
-    ),
-  });
-
-  return balance;
-};
-
-/*
- * ============================================================
- * MAIN TRANSFER
- * ============================================================
- */
-
-export const prepareTransfer = async (
-  user: AuthUser,
-  input: TransferInput,
-) => {
-  const amount = new Prisma.Decimal(input.amount);
-
-  /*
-   * Unique ID for correlating performance logs belonging
-   * to the same transfer execution.
-   */
-  const perfTransferId = randomUUID();
-
-  /*
-   * IMPORTANT:
-   *
-   * This timestamp is taken BEFORE calling prisma.$transaction().
-   *
-   * Therefore:
-   *
-   * transactionCallDuration =
-   *   time spent waiting for Prisma to start/acquire
-   *   the interactive transaction
-   *
-   * This is especially important for diagnosing P2028.
-   */
   const transactionCallStart = performance.now();
 
   perfLog("transaction requested", {
@@ -392,71 +265,84 @@ export const prepareTransfer = async (
     senderAccount: input.senderAccount,
     receiverAccount: input.receiverAccount,
     amount: amount.toString(),
-    currency: input.currency,
+    currency: currency.code,
   });
 
   try {
     const result = await prisma.$transaction(
       async (tx) => {
-        /*
-         * ====================================================
-         * TRANSACTION CALLBACK START
-         * ====================================================
-         *
-         * If a P2028 happens before this line, the callback
-         * will never execute.
-         *
-         * That allows us to distinguish transaction-start
-         * contention from work inside the transaction.
-         */
-
-        const transactionCallbackStart =
-          performance.now();
+        const callbackStart = performance.now();
 
         perfLog("transaction callback started", {
           perfTransferId,
           waitBeforeCallbackMs: Number(
             (
-              transactionCallbackStart -
+              callbackStart -
               transactionCallStart
             ).toFixed(2),
           ),
         });
 
-        /*
-         * ====================================================
-         * 1. RESOLVE ACCOUNTS
-         * ====================================================
-         */
+        /* 1. Lock accounts */
 
-        const accountResolutionStart =
-          performance.now();
+        const accountLockStart = performance.now();
 
-        const senderId = await getAccountId(
-          tx,
+        const orderedAccounts = [
           input.senderAccount,
-        );
-
-        const receiverId = await getAccountId(
-          tx,
           input.receiverAccount,
+        ].sort();
+
+        const lockedAccounts = await Promise.all(
+          orderedAccounts.map((accountNumber) =>
+            lockAccountByNumber(
+              tx,
+              accountNumber,
+            ),
+          ),
         );
 
-        perfLog("account resolution completed", {
-          perfTransferId,
-          durationMs: Number(
-            (
-              performance.now() -
-              accountResolutionStart
-            ).toFixed(2),
-          ),
-        });
+        perfLog(
+          "both account share locks completed",
+          {
+            perfTransferId,
+            durationMs: Number(
+              (
+                performance.now() -
+                accountLockStart
+              ).toFixed(2),
+            ),
+          },
+        );
 
-        /*
-         * Sender and receiver cannot be the same account.
-         */
+        const sender = lockedAccounts.find(
+          (account) =>
+            account.account_number ===
+            input.senderAccount,
+        );
 
-        if (senderId === receiverId) {
+        const receiver = lockedAccounts.find(
+          (account) =>
+            account.account_number ===
+            input.receiverAccount,
+        );
+
+        if (!sender) {
+          throw new AppError(
+            "Sender account not found",
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+          );
+        }
+
+        if (!receiver) {
+          throw new AppError(
+            "Receiver account not found",
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+          );
+        }
+
+        if (sender.id === receiver.id) {
           throw new AppError(
             "Sender and receiver accounts must be different",
             400,
@@ -464,68 +350,7 @@ export const prepareTransfer = async (
           );
         }
 
-        /*
-         * ====================================================
-         * 2. LOCK ACCOUNTS
-         * ====================================================
-         *
-         * Locks are acquired in deterministic order.
-         *
-         * A -> B
-         * B -> A
-         *
-         * both become:
-         *
-         * smaller UUID -> larger UUID
-         *
-         * This reduces deadlock risk.
-         */
-
-        const accountLockStart =
-          performance.now();
-
-        const orderedIds = [
-          senderId,
-          receiverId,
-        ].sort();
-
-        const lockedAccounts = await Promise.all(
-          orderedIds.map((id) =>
-            lockAccount(tx, id),
-          ),
-        );
-
-        perfLog("both account locks completed", {
-          perfTransferId,
-          durationMs: Number(
-            (
-              performance.now() -
-              accountLockStart
-            ).toFixed(2),
-          ),
-        });
-
-        const sender = lockedAccounts.find(
-          (account) => account.id === senderId,
-        );
-
-        const receiver = lockedAccounts.find(
-          (account) => account.id === receiverId,
-        );
-
-        if (!sender || !receiver) {
-          throw new AppError(
-            "Transfer accounts could not be locked",
-            500,
-            ErrorCode.INTERNAL_SERVER_ERROR,
-          );
-        }
-
-        /*
-         * ====================================================
-         * 3. AUTHORIZATION
-         * ====================================================
-         */
+        /* 2. Authorization */
 
         const authorizationStart =
           performance.now();
@@ -562,11 +387,7 @@ export const prepareTransfer = async (
           ),
         });
 
-        /*
-         * ====================================================
-         * 4. ACCOUNT STATUS
-         * ====================================================
-         */
+        /* 3. Account status */
 
         if (sender.status !== "ACTIVE") {
           throw new AppError(
@@ -584,39 +405,23 @@ export const prepareTransfer = async (
           );
         }
 
-        /*
-         * ====================================================
-         * 5. CURRENCY
-         * ====================================================
-         */
+        /* 4. Lock both balances in one SQL query */
 
-        const currency = await validateCurrency(
+        const balanceReadStart = performance.now();
+
+        const lockedBalances = await lockBalances(
           tx,
-          input.currency,
-        );
-
-        /*
-         * ====================================================
-         * 6. BALANCES
-         * ====================================================
-         */
-
-        const balanceReadStart =
-          performance.now();
-
-        const senderBalance = await getBalance(
-          tx,
-          sender.id,
+          [sender.id, receiver.id],
           currency.code,
         );
 
-        const receiverBalance = await getBalance(
-          tx,
-          receiver.id,
-          currency.code,
-        );
+        const senderBalance =
+          lockedBalances.get(sender.id) ?? null;
 
-        perfLog("both balances loaded", {
+        const receiverBalance =
+          lockedBalances.get(receiver.id) ?? null;
+
+        perfLog("both balances locked", {
           perfTransferId,
           durationMs: Number(
             (
@@ -642,11 +447,7 @@ export const prepareTransfer = async (
           );
         }
 
-        /*
-         * ====================================================
-         * 7. BALANCE CHECK
-         * ====================================================
-         */
+        /* 5. Balance check */
 
         if (
           senderBalance.availableBalance.lt(
@@ -660,18 +461,13 @@ export const prepareTransfer = async (
           );
         }
 
-        /*
-         * ====================================================
-         * 8. DEBIT SENDER
-         * ====================================================
-         */
+        /* 6. Debit */
 
-        const debitStart =
-          performance.now();
+        const debitStart = performance.now();
 
         const senderAfter = await updateBalance(
           tx,
-          senderBalance.id,
+          senderBalance,
           amount,
           "debit",
         );
@@ -690,18 +486,13 @@ export const prepareTransfer = async (
           "AFTER_SENDER_DEBIT",
         );
 
-        /*
-         * ====================================================
-         * 9. CREDIT RECEIVER
-         * ====================================================
-         */
+        /* 7. Credit */
 
-        const creditStart =
-          performance.now();
+        const creditStart = performance.now();
 
         const receiverAfter = await updateBalance(
           tx,
-          receiverBalance.id,
+          receiverBalance,
           amount,
           "credit",
         );
@@ -720,11 +511,7 @@ export const prepareTransfer = async (
           "AFTER_RECEIVER_CREDIT",
         );
 
-        /*
-         * ====================================================
-         * 10. CREATE TRANSACTION
-         * ====================================================
-         */
+        /* 8. Transaction record */
 
         const transactionCreateStart =
           performance.now();
@@ -759,26 +546,25 @@ export const prepareTransfer = async (
             },
           });
 
-        perfLog("transaction record created", {
-          perfTransferId,
-          transactionId: transaction.id,
-          durationMs: Number(
-            (
-              performance.now() -
-              transactionCreateStart
-            ).toFixed(2),
-          ),
-        });
+        perfLog(
+          "transaction record created",
+          {
+            perfTransferId,
+            transactionId: transaction.id,
+            durationMs: Number(
+              (
+                performance.now() -
+                transactionCreateStart
+              ).toFixed(2),
+            ),
+          },
+        );
 
         throwIfTransferTestFailure(
           "AFTER_TRANSACTION_CREATION",
         );
 
-        /*
-         * ====================================================
-         * 11. SENDER LEDGER ENTRY
-         * ====================================================
-         */
+        /* 9. Ledger entries */
 
         const senderLedgerStart =
           performance.now();
@@ -807,25 +593,22 @@ export const prepareTransfer = async (
             },
           });
 
-        perfLog("sender ledger entry created", {
-          perfTransferId,
-          durationMs: Number(
-            (
-              performance.now() -
-              senderLedgerStart
-            ).toFixed(2),
-          ),
-        });
+        perfLog(
+          "sender ledger entry created",
+          {
+            perfTransferId,
+            durationMs: Number(
+              (
+                performance.now() -
+                senderLedgerStart
+              ).toFixed(2),
+            ),
+          },
+        );
 
         throwIfTransferTestFailure(
           "AFTER_FIRST_LEDGER_ENTRY",
         );
-
-        /*
-         * ====================================================
-         * 12. RECEIVER LEDGER ENTRY
-         * ====================================================
-         */
 
         const receiverLedgerStart =
           performance.now();
@@ -871,11 +654,7 @@ export const prepareTransfer = async (
           "AFTER_SECOND_LEDGER_ENTRY",
         );
 
-        /*
-         * ====================================================
-         * 13. TRANSACTION LEGS
-         * ====================================================
-         */
+        /* 10. Transaction legs */
 
         const transactionLegStart =
           performance.now();
@@ -912,14 +691,9 @@ export const prepareTransfer = async (
           },
         );
 
-        /*
-         * ====================================================
-         * 14. AUDIT LOG
-         * ====================================================
-         */
+        /* 11. Audit */
 
-        const auditStart =
-          performance.now();
+        const auditStart = performance.now();
 
         const auditLog =
           await tx.auditLog.create({
@@ -967,12 +741,6 @@ export const prepareTransfer = async (
           "AFTER_AUDIT_CREATION",
         );
 
-        /*
-         * ====================================================
-         * TRANSACTION CALLBACK COMPLETED
-         * ====================================================
-         */
-
         perfLog(
           "transaction callback completed",
           {
@@ -980,17 +748,11 @@ export const prepareTransfer = async (
             callbackDurationMs: Number(
               (
                 performance.now() -
-                transactionCallbackStart
+                callbackStart
               ).toFixed(2),
             ),
           },
         );
-
-        /*
-         * ====================================================
-         * RESPONSE DATA
-         * ====================================================
-         */
 
         return {
           transaction: {
@@ -1006,19 +768,15 @@ export const prepareTransfer = async (
             receiver.account_number,
 
           amount: amount.toString(),
-
           currency: currency.code,
 
           balance: {
             senderBefore:
               senderBalance.availableBalance.toString(),
-
             senderAfter:
               senderAfter.availableBalance.toString(),
-
             receiverBefore:
               receiverBalance.availableBalance.toString(),
-
             receiverAfter:
               receiverAfter.availableBalance.toString(),
           },
@@ -1047,54 +805,33 @@ export const prepareTransfer = async (
           auditLog,
         };
       },
+    );
+
+    perfLog(
+      "transaction completed successfully",
       {
-        /*
-         * Keep the existing configured transaction
-         * behavior from Prisma configuration.
-         *
-         * This option is intentionally NOT changed here.
-         */
+        perfTransferId,
+        totalTransactionCallDurationMs:
+          Number(
+            (
+              performance.now() -
+              transactionCallStart
+            ).toFixed(2),
+          ),
       },
     );
 
-    /*
-     * ========================================================
-     * TRANSACTION COMPLETED
-     * ========================================================
-     */
-
-    perfLog("transaction completed successfully", {
-      perfTransferId,
-      totalTransactionCallDurationMs: Number(
-        (
-          performance.now() -
-          transactionCallStart
-        ).toFixed(2),
-      ),
-    });
-
     return result;
   } catch (error) {
-    /*
-     * ========================================================
-     * TRANSACTION FAILED
-     * ========================================================
-     *
-     * This is particularly important for P2028.
-     *
-     * If "transaction callback started" was never logged
-     * for a request, the failure happened while Prisma was
-     * trying to start the interactive transaction.
-     */
-
     perfLog("transaction failed", {
       perfTransferId,
-      totalTransactionCallDurationMs: Number(
-        (
-          performance.now() -
-          transactionCallStart
-        ).toFixed(2),
-      ),
+      totalTransactionCallDurationMs:
+        Number(
+          (
+            performance.now() -
+            transactionCallStart
+          ).toFixed(2),
+        ),
       errorName:
         error instanceof Error
           ? error.name
@@ -1109,14 +846,7 @@ export const prepareTransfer = async (
   }
 };
 
-/*
- * ============================================================
- * LEGACY AUTHORIZATION-ONLY OPERATION
- * ============================================================
- *
- * Kept for existing authorization regression tests.
- * ============================================================
- */
+/* Legacy authorization-only operation */
 
 export const authorizeTransfer = async (
   sourceAccountId: string,

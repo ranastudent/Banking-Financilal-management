@@ -6,6 +6,7 @@ import { ErrorCode } from "../../errors/errorCodes";
 import type { AuthUser } from "../../types/auth";
 import type { CreateAccountInput } from "../schemas/account.schema";
 import { getCustomerOwnedAccount } from "../policies/account.policy";
+import { Prisma } from "@prisma/client";
 
 
 const MAX_ACCOUNT_NUMBER_ATTEMPTS = 5;
@@ -261,6 +262,78 @@ export const getCustomerAccountById = async (
   return account;
 };
 
+const lockAccountForStatusUpdate = async (
+  tx: Prisma.TransactionClient,
+  accountId: string,
+) => {
+  /*
+   * Canonical account locking protocol:
+   *
+   * Account
+   *   ↓
+   * AccountBalance
+   *
+   * Financial operations use:
+   *   Account FOR SHARE
+   *   ↓
+   *   AccountBalance FOR UPDATE
+   *
+   * Status operations use:
+   *   Account FOR UPDATE
+   *   ↓
+   *   AccountBalance FOR UPDATE
+   *
+   * Keeping the same lock order prevents lock-order inversion.
+   */
+
+  const accountRows = await tx.$queryRaw<
+    Array<{
+      id: string;
+      userId: string;
+      accountNumber: string;
+      accountType: string;
+      status: string;
+    }>
+  >`
+    SELECT
+      id,
+      user_id AS "userId",
+      account_number AS "accountNumber",
+      account_type AS "accountType",
+      status
+    FROM accounts
+    WHERE id = CAST(${accountId} AS uuid)
+    FOR UPDATE
+  `;
+
+  const account = accountRows[0];
+
+  if (!account) {
+    throw new AppError(
+      "Account not found",
+      404,
+      ErrorCode.RESOURCE_NOT_FOUND,
+    );
+  }
+
+  /*
+   * Lock all existing balances for this account.
+   *
+   * ORDER BY currency_code gives deterministic ordering
+   * when multiple balance rows exist.
+   */
+  await tx.$queryRaw`
+    SELECT
+      id
+    FROM account_balances
+    WHERE account_id = CAST(${accountId} AS uuid)
+    ORDER BY currency_code ASC
+    FOR UPDATE
+  `;
+
+  return account;
+};
+
 export const updateCustomerAccountStatus = async (
   accountId: string,
   userId: string,
@@ -268,12 +341,24 @@ export const updateCustomerAccountStatus = async (
   ipAddress?: string,
   userAgent?: string,
 ) => {
+  /*
+   * This initial ownership check remains outside the transaction
+   * for fast rejection of unauthorized requests.
+   *
+   * The account status itself MUST be re-read inside the
+   * transaction because the outside read can become stale.
+   */
   const account = await getCustomerOwnedAccount(
     accountId,
     userId,
   );
 
-  // CLOSED is terminal.
+  /*
+   * CLOSED is terminal based on the current snapshot.
+   *
+   * We will also re-check this inside the transaction after
+   * acquiring the canonical Account lock.
+   */
   if (account.status === "CLOSED") {
     throw new AppError(
       "Closed account cannot be modified",
@@ -282,7 +367,11 @@ export const updateCustomerAccountStatus = async (
     );
   }
 
-  // No actual status change.
+  /*
+   * No actual status change.
+   *
+   * This remains a read-only fast path.
+   */
   if (account.status === status) {
     return prisma.account.findUnique({
       where: {
@@ -302,6 +391,75 @@ export const updateCustomerAccountStatus = async (
 
   const updatedAccount = await prisma.$transaction(
     async (tx) => {
+      /*
+       * ======================================================
+       * 1. CANONICAL ACCOUNT LOCK
+       * ======================================================
+       *
+       * Status operation:
+       *
+       * Account FOR UPDATE
+       *       ↓
+       * AccountBalance FOR UPDATE
+       *
+       * Financial operation:
+       *
+       * Account FOR SHARE
+       *       ↓
+       * AccountBalance FOR UPDATE
+       *
+       * Both operations therefore follow:
+       *
+       * Account → AccountBalance
+       */
+      const lockedAccount =
+        await lockAccountForStatusUpdate(
+          tx,
+          accountId,
+        );
+
+      /*
+       * ======================================================
+       * 2. RE-CHECK CURRENT STATUS
+       * ======================================================
+       *
+       * The status read performed before the transaction may
+       * now be stale. The locked row is authoritative.
+       */
+      if (lockedAccount.status === "CLOSED") {
+        throw new AppError(
+          "Closed account cannot be modified",
+          409,
+          ErrorCode.CONFLICT,
+        );
+      }
+
+      /*
+       * Another concurrent request may already have changed
+       * the status while the original request was waiting.
+       */
+      if (lockedAccount.status === status) {
+        return tx.account.findUnique({
+          where: {
+            id: accountId,
+          },
+          select: {
+            id: true,
+            userId: true,
+            accountNumber: true,
+            accountType: true,
+            status: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        });
+      }
+
+      /*
+       * ======================================================
+       * 3. UPDATE ACCOUNT STATUS
+       * ======================================================
+       */
       const updated = await tx.account.update({
         where: {
           id: accountId,
@@ -320,17 +478,24 @@ export const updateCustomerAccountStatus = async (
         },
       });
 
+      /*
+       * ======================================================
+       * 4. AUDIT LOG
+       * ======================================================
+       */
       await tx.auditLog.create({
         data: {
           userId,
           action: "ACCOUNT_STATUS_CHANGED",
           entityType: "ACCOUNT",
           entityId: accountId,
-          description: `Account ${account.accountNumber} status changed from ${account.status} to ${status}.`,
+          description:
+            `Account ${lockedAccount.accountNumber} status changed ` +
+            `from ${lockedAccount.status} to ${status}.`,
           ipAddress: ipAddress ?? null,
           userAgent: userAgent ?? null,
           metadata: {
-            previousStatus: account.status,
+            previousStatus: lockedAccount.status,
             newStatus: status,
           },
         },

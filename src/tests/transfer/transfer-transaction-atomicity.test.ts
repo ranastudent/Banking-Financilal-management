@@ -679,7 +679,7 @@ describe("14.6.1 Transaction Atomicity", () => {
       process.env.NODE_ENV;
 
     const originalFailureFlag =
-      process.env.TRANSFER_TEST_FAILURE_AFTER_MUTATION;
+       process.env.TRANSFER_TEST_FAILURE_AFTER_MUTATION;
 
     try {
       // ------------------------------------------------------
@@ -688,8 +688,8 @@ describe("14.6.1 Transaction Atomicity", () => {
 
       process.env.NODE_ENV = "test";
 
-      process.env.TRANSFER_TEST_FAILURE_AFTER_MUTATION =
-        "true";
+      process.env.TRANSFER_TEST_FAILURE_STAGE =
+          "AFTER_RECEIVER_CREDIT";
 
       // ------------------------------------------------------
       // Execute transfer
@@ -854,6 +854,13 @@ describe("14.6.1 Transaction Atomicity", () => {
         process.env.TRANSFER_TEST_FAILURE_AFTER_MUTATION =
           originalFailureFlag;
       }
+
+      if (originalFailureFlag === undefined) {
+              delete process.env.TRANSFER_TEST_FAILURE_STAGE;
+        } else {
+          process.env.TRANSFER_TEST_FAILURE_STAGE =
+            originalFailureFlag;
+        }
     }
   });
 });

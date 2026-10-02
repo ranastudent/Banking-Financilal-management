@@ -725,8 +725,11 @@ describe("14.9 Atomic Debit + Credit", () => {
       try {
         process.env.NODE_ENV = "test";
 
-        process.env.TRANSFER_TEST_FAILURE_AFTER_MUTATION =
-          "true";
+        const originalFailureStage =
+            process.env.TRANSFER_TEST_FAILURE_STAGE;
+
+          process.env.TRANSFER_TEST_FAILURE_STAGE =
+            "AFTER_RECEIVER_CREDIT";
 
         const response = await request(app)
           .post("/api/v1/transfers")
@@ -783,6 +786,13 @@ describe("14.9 Atomic Debit + Credit", () => {
             .TRANSFER_TEST_FAILURE_AFTER_MUTATION =
             originalFailureFlag;
         }
+
+        if (originalFailureFlag === undefined) {
+            delete process.env.TRANSFER_TEST_FAILURE_STAGE;
+          } else {
+            process.env.TRANSFER_TEST_FAILURE_STAGE =
+              originalFailureFlag;
+          }
       }
 
       // ------------------------------------------------------
