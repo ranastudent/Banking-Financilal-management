@@ -70,6 +70,40 @@ const throwIfTransferTestFailure = (
   }
 };
 
+/* Non-transactional account pre-resolution */
+/*
+ * Stage 2H-C1:
+ * Resolve accounts before opening the interactive transaction.
+ *
+ * This is only a pre-flight read.
+ * The authoritative account state is still obtained
+ * inside the transaction with FOR SHARE.
+ */
+
+const resolveAccountsByNumber = async (
+  accountNumbers: string[],
+): Promise<Map<string, LockedAccount>> => {
+  const rows = await prisma.$queryRaw<LockedAccount[]>`
+    SELECT
+      id,
+      user_id,
+      account_number,
+      account_type,
+      status
+    FROM accounts
+    WHERE account_number IN (
+      ${Prisma.join(accountNumbers)}
+    )
+  `;
+
+  return new Map(
+    rows.map((account) => [
+      account.account_number,
+      account,
+    ]),
+  );
+};
+
 /* Account lock */
 
 const lockAccountByNumber = async (
@@ -258,6 +292,126 @@ export const prepareTransfer = async (
     );
   }
 
+  /*
+   * Stage 2H-C1
+   * Pre-transaction account resolution.
+   *
+   * This query does not lock anything.
+   * It only allows cheap validation to happen
+   * before opening the interactive transaction.
+   */
+
+  const preflightStart = performance.now();
+
+  const preflightAccounts =
+    await resolveAccountsByNumber([
+      input.senderAccount,
+      input.receiverAccount,
+    ]);
+
+  const preflightSender =
+    preflightAccounts.get(input.senderAccount);
+
+  const preflightReceiver =
+    preflightAccounts.get(input.receiverAccount);
+
+  perfLog("account preflight completed", {
+    perfTransferId,
+    senderFound: Boolean(preflightSender),
+    receiverFound: Boolean(preflightReceiver),
+    outsideTransaction: true,
+    durationMs: Number(
+      (performance.now() - preflightStart).toFixed(2),
+    ),
+  });
+
+  /* Pre-transaction sender validation */
+
+  if (!preflightSender) {
+    throw new AppError(
+      "Sender account not found",
+      404,
+      ErrorCode.RESOURCE_NOT_FOUND,
+    );
+  }
+
+  /* Pre-transaction receiver validation */
+
+  if (!preflightReceiver) {
+    throw new AppError(
+      "Receiver account not found",
+      404,
+      ErrorCode.RESOURCE_NOT_FOUND,
+    );
+  }
+
+  /* Pre-transaction same-account validation */
+
+  if (preflightSender.id === preflightReceiver.id) {
+    throw new AppError(
+      "Sender and receiver accounts must be different",
+      400,
+      ErrorCode.BAD_REQUEST,
+    );
+  }
+
+  /*
+   * Pre-transaction authorization.
+   *
+   * The authoritative sender account is still re-read
+   * and locked inside the transaction.
+   */
+
+  const authorizationStart = performance.now();
+
+  if (
+    user.role === "CUSTOMER" &&
+    preflightSender.user_id !== user.id
+  ) {
+    throw new AppError(
+      "You do not have permission to transfer from this account",
+      403,
+      ErrorCode.FORBIDDEN,
+    );
+  }
+
+  if (
+    user.role !== "CUSTOMER" &&
+    user.role !== "ADMIN"
+  ) {
+    throw new AppError(
+      "You do not have permission to perform a fund transfer",
+      403,
+      ErrorCode.FORBIDDEN,
+    );
+  }
+
+  perfLog("pre-transaction authorization completed", {
+    perfTransferId,
+    outsideTransaction: true,
+    durationMs: Number(
+      (performance.now() - authorizationStart).toFixed(2),
+    ),
+  });
+
+  /* Pre-transaction status validation */
+
+  if (preflightSender.status !== "ACTIVE") {
+    throw new AppError(
+      "Sender account is not active",
+      409,
+      ErrorCode.CONFLICT,
+    );
+  }
+
+  if (preflightReceiver.status !== "ACTIVE") {
+    throw new AppError(
+      "Receiver account is not active",
+      409,
+      ErrorCode.CONFLICT,
+    );
+  }
+
   const transactionCallStart = performance.now();
 
   perfLog("transaction requested", {
@@ -283,7 +437,12 @@ export const prepareTransfer = async (
           ),
         });
 
-        /* 1. Lock accounts */
+        /*
+         * 1. Authoritative account locks
+         *
+         * Lock order remains deterministic.
+         * Account -> AccountBalance protocol is preserved.
+         */
 
         const accountLockStart = performance.now();
 
@@ -326,6 +485,11 @@ export const prepareTransfer = async (
             input.receiverAccount,
         );
 
+        /*
+         * These checks remain inside because the
+         * transactional account state is authoritative.
+         */
+
         if (!sender) {
           throw new AppError(
             "Sender account not found",
@@ -350,10 +514,14 @@ export const prepareTransfer = async (
           );
         }
 
-        /* 2. Authorization */
-
-        const authorizationStart =
-          performance.now();
+        /*
+         * 2. Transactional authorization re-check
+         *
+         * The preflight authorization prevented opening
+         * unnecessary transactions.
+         *
+         * This check protects the authoritative locked state.
+         */
 
         if (
           user.role === "CUSTOMER" &&
@@ -377,17 +545,12 @@ export const prepareTransfer = async (
           );
         }
 
-        perfLog("authorization completed", {
-          perfTransferId,
-          durationMs: Number(
-            (
-              performance.now() -
-              authorizationStart
-            ).toFixed(2),
-          ),
-        });
-
-        /* 3. Account status */
+        /*
+         * 3. Transactional account status re-check
+         *
+         * The preflight status check is only an early rejection.
+         * The locked account status is authoritative.
+         */
 
         if (sender.status !== "ACTIVE") {
           throw new AppError(
@@ -405,7 +568,11 @@ export const prepareTransfer = async (
           );
         }
 
-        /* 4. Lock both balances in one SQL query */
+        /*
+         * 4. Lock both balances in one SQL query
+         *
+         * MUST remain inside the transaction.
+         */
 
         const balanceReadStart = performance.now();
 
@@ -447,7 +614,11 @@ export const prepareTransfer = async (
           );
         }
 
-        /* 5. Balance check */
+        /*
+         * 5. Authoritative balance check
+         *
+         * The balance is protected by FOR UPDATE.
+         */
 
         if (
           senderBalance.availableBalance.lt(
