@@ -14,7 +14,7 @@ describe("Fund Transfer - Idempotency", () => {
 
   afterEach(async () => {
     /*
-     * Delete idempotency records created by these tests.
+     * Delete explicitly tracked idempotency records.
      */
     if (createdIdempotencyRecordIds.length > 0) {
       await prisma.idempotencyRecord.deleteMany({
@@ -30,7 +30,7 @@ describe("Fund Transfer - Idempotency", () => {
 
     /*
      * Delete ledger entries and transaction legs
-     * before deleting transactions.
+     * before deleting their parent transactions.
      */
     if (createdTransactionIds.length > 0) {
       await prisma.ledgerEntry.deleteMany({
@@ -61,7 +61,7 @@ describe("Fund Transfer - Idempotency", () => {
     }
 
     /*
-     * Delete balances before accounts.
+     * Delete balances before deleting accounts.
      */
     if (createdAccountIds.length > 0) {
       await prisma.accountBalance.deleteMany({
@@ -84,7 +84,7 @@ describe("Fund Transfer - Idempotency", () => {
     }
 
     /*
-     * Delete user-dependent records before users.
+     * Delete user-dependent records before deleting users.
      */
     if (createdUserIds.length > 0) {
       await prisma.refreshToken.deleteMany({
@@ -171,18 +171,10 @@ describe("Fund Transfer - Idempotency", () => {
     return account;
   };
 
-  /*
-   * Support all application roles so the helper is compatible
-   * with Prisma's UserRole type.
-   */
   const createAccessToken = (user: {
     id: string;
     email: string;
-    role:
-      | "CUSTOMER"
-      | "ADMIN"
-      | "SUPPORT"
-      | "AUDITOR";
+    role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR";
   }) => {
     return generateAccessToken({
       id: user.id,
@@ -213,10 +205,125 @@ describe("Fund Transfer - Idempotency", () => {
   };
 
   /*
+   * Verify that a transfer has exactly two ledger entries:
+   * one DEBIT and one CREDIT, both for the expected amount.
+   */
+  const expectCorrectLedgerEntries = async (
+    transactionId: string,
+    expectedAmount: string,
+  ) => {
+    const ledgerEntries = await prisma.ledgerEntry.findMany({
+      where: {
+        transactionId,
+      },
+      select: {
+        entryType: true,
+        amount: true,
+      },
+    });
+
+    expect(ledgerEntries).toHaveLength(2);
+
+    expect(
+      ledgerEntries.map((entry) => ({
+        entryType: entry.entryType,
+        amount: entry.amount.toString(),
+      })),
+    ).toEqual(
+      expect.arrayContaining([
+        {
+          entryType: "DEBIT",
+          amount: expectedAmount,
+        },
+        {
+          entryType: "CREDIT",
+          amount: expectedAmount,
+        },
+      ]),
+    );
+  };
+
+  /*
+   * Verify that a transfer has exactly two transaction legs:
+   * one DEBIT and one CREDIT, both for the expected amount.
+   *
+   * This assumes the service uses the same DEBIT/CREDIT
+   * convention for transaction legs and ledger entries.
+   */
+  const expectCorrectTransactionLegs = async (
+    transactionId: string,
+    expectedAmount: string,
+  ) => {
+    const transactionLegs = await prisma.transactionLeg.findMany({
+      where: {
+        transactionId,
+      },
+      select: {
+        entryType: true,
+        amount: true,
+      },
+    });
+
+    expect(transactionLegs).toHaveLength(2);
+
+    expect(
+      transactionLegs.map((leg) => ({
+        entryType: leg.entryType,
+        amount: leg.amount.toString(),
+      })),
+    ).toEqual(
+      expect.arrayContaining([
+        {
+          entryType: "DEBIT",
+          amount: expectedAmount,
+        },
+        {
+          entryType: "CREDIT",
+          amount: expectedAmount,
+        },
+      ]),
+    );
+  };
+
+  /*
+   * Find exactly one matching transfer and register it
+   * for cleanup.
+   */
+  const findAndTrackSingleTransfer = async (
+    senderAccountId: string,
+    receiverAccountId: string,
+  ) => {
+    const transactions = await prisma.transaction.findMany({
+      where: {
+        sourceAccountId: senderAccountId,
+        destinationAccountId: receiverAccountId,
+        type: "INTERNAL_TRANSFER",
+      },
+    });
+
+    expect(transactions).toHaveLength(1);
+
+    const transaction = transactions[0];
+
+    expect(transaction).toBeDefined();
+
+    if (!transaction) {
+      throw new Error(
+        "Expected exactly one transfer transaction",
+      );
+    }
+
+    createdTransactionIds.push(transaction.id);
+
+    return transaction;
+  };
+
+  /*
    * ---------------------------------------------------------
-   * 14.5.2 First request creates transfer
+   * 15.5.1 First request creates a transfer
    * ---------------------------------------------------------
    */
+
   it("should execute the first request successfully", async () => {
     const sender = await createUser();
     const receiver = await createUser();
@@ -224,82 +331,48 @@ describe("Fund Transfer - Idempotency", () => {
     const senderAccount = await createAccount(sender.id);
     const receiverAccount = await createAccount(receiver.id);
 
-    await createBdtBalance(
-      senderAccount.id,
-      "10000",
-    );
-
-    await createBdtBalance(
-      receiverAccount.id,
-      "5000",
-    );
+    await createBdtBalance(senderAccount.id, "10000");
+    await createBdtBalance(receiverAccount.id, "5000");
 
     const accessToken = createAccessToken(sender);
-
-    const idempotencyKey =
-      createIdempotencyKey("transfer-first");
+    const idempotencyKey = createIdempotencyKey("transfer-first");
 
     const response = await request(app)
       .post("/api/v1/transfers")
-      .set(
-        "Authorization",
-        `Bearer ${accessToken}`,
-      )
-      .set(
-        "Idempotency-Key",
-        idempotencyKey,
-      )
+      .set("Authorization", `Bearer ${accessToken}`)
+      .set("Idempotency-Key", idempotencyKey)
       .send({
-        senderAccount:
-          senderAccount.accountNumber,
-        receiverAccount:
-          receiverAccount.accountNumber,
+        senderAccount: senderAccount.accountNumber,
+        receiverAccount: receiverAccount.accountNumber,
         amount: "1000",
         currency: "BDT",
       });
 
     expect(response.status).toBe(200);
-
     expect(response.body.success).toBe(true);
 
-    expect(
-      response.body.data.transaction.type,
-    ).toBe("INTERNAL_TRANSFER");
+    expect(response.body.data.transaction.type).toBe(
+      "INTERNAL_TRANSFER",
+    );
 
-    expect(
-      response.body.data.transaction.status,
-    ).toBe("COMPLETED");
+    expect(response.body.data.transaction.status).toBe("COMPLETED");
+    expect(response.body.data.transaction.amount).toBe("1000");
 
-    expect(
-      response.body.data.transaction.amount,
-    ).toBe("1000");
+    const transaction = await findAndTrackSingleTransfer(
+      senderAccount.id,
+      receiverAccount.id,
+    );
 
-    const transaction =
-      await prisma.transaction.findFirst({
-        where: {
-          sourceAccountId: senderAccount.id,
-          destinationAccountId:
-            receiverAccount.id,
-        },
-        orderBy: {
-          createdAt: "desc",
-        },
-      });
-
-    expect(transaction).not.toBeNull();
-
-    if (transaction) {
-      createdTransactionIds.push(
-        transaction.id,
-      );
-    }
+    await expectCorrectLedgerEntries(transaction.id, "1000");
+    await expectCorrectTransactionLegs(transaction.id, "1000");
   });
 
   /*
    * ---------------------------------------------------------
-   * 14.5.3 Same key + same request replays response
+   * 15.5.2 Same key + same request replays the response
    * ---------------------------------------------------------
    */
+
   it("should replay the same response when the same key and request are sent again", async () => {
     const sender = await createUser();
     const receiver = await createUser();
@@ -307,108 +380,93 @@ describe("Fund Transfer - Idempotency", () => {
     const senderAccount = await createAccount(sender.id);
     const receiverAccount = await createAccount(receiver.id);
 
-    await createBdtBalance(
-      senderAccount.id,
-      "10000",
-    );
-
-    await createBdtBalance(
-      receiverAccount.id,
-      "5000",
-    );
+    await createBdtBalance(senderAccount.id, "10000");
+    await createBdtBalance(receiverAccount.id, "5000");
 
     const accessToken = createAccessToken(sender);
-
-    const idempotencyKey =
-      createIdempotencyKey("transfer-replay");
+    const idempotencyKey = createIdempotencyKey("transfer-replay");
 
     const payload = {
-      senderAccount:
-        senderAccount.accountNumber,
-      receiverAccount:
-        receiverAccount.accountNumber,
+      senderAccount: senderAccount.accountNumber,
+      receiverAccount: receiverAccount.accountNumber,
       amount: "1000",
       currency: "BDT",
     };
 
     const firstResponse = await request(app)
       .post("/api/v1/transfers")
-      .set(
-        "Authorization",
-        `Bearer ${accessToken}`,
-      )
-      .set(
-        "Idempotency-Key",
-        idempotencyKey,
-      )
+      .set("Authorization", `Bearer ${accessToken}`)
+      .set("Idempotency-Key", idempotencyKey)
       .send(payload);
 
     expect(firstResponse.status).toBe(200);
 
     const secondResponse = await request(app)
       .post("/api/v1/transfers")
-      .set(
-        "Authorization",
-        `Bearer ${accessToken}`,
-      )
-      .set(
-        "Idempotency-Key",
-        idempotencyKey,
-      )
+      .set("Authorization", `Bearer ${accessToken}`)
+      .set("Idempotency-Key", idempotencyKey)
       .send(payload);
 
     expect(secondResponse.status).toBe(200);
-
-    expect(secondResponse.body.success).toBe(
-      true,
-    );
+    expect(secondResponse.body.success).toBe(true);
 
     /*
      * The logical response should be replayed.
      */
-    expect(
-      secondResponse.body.data,
-    ).toEqual(firstResponse.body.data);
+    expect(secondResponse.body.data).toEqual(
+      firstResponse.body.data,
+    );
 
     /*
-     * requestId is generated per HTTP request,
-     * therefore it should not be expected to match.
+     * requestId may be generated per HTTP request.
+     * It is therefore checked independently.
      */
-    expect(
-      secondResponse.body.requestId,
-    ).toEqual(expect.any(String));
+    expect(secondResponse.body.requestId).toEqual(
+      expect.any(String),
+    );
+
+    const transaction = await findAndTrackSingleTransfer(
+      senderAccount.id,
+      receiverAccount.id,
+    );
+
+    await expectCorrectLedgerEntries(transaction.id, "1000");
+    await expectCorrectTransactionLegs(transaction.id, "1000");
 
     /*
-     * Register the actual transaction for cleanup.
+     * Retrying the same request must not change balances again.
      */
-    const transaction =
-      await prisma.transaction.findFirst({
-        where: {
-          sourceAccountId: senderAccount.id,
-          destinationAccountId:
-            receiverAccount.id,
-          type: "INTERNAL_TRANSFER",
+    const senderBalance = await prisma.accountBalance.findUnique({
+      where: {
+        accountId_currencyCode: {
+          accountId: senderAccount.id,
+          currencyCode: "BDT",
         },
-        orderBy: {
-          createdAt: "desc",
+      },
+    });
+
+    const receiverBalance = await prisma.accountBalance.findUnique({
+      where: {
+        accountId_currencyCode: {
+          accountId: receiverAccount.id,
+          currencyCode: "BDT",
         },
-      });
+      },
+    });
 
-    expect(transaction).not.toBeNull();
+    expect(senderBalance).not.toBeNull();
+    expect(receiverBalance).not.toBeNull();
 
-    if (transaction) {
-      createdTransactionIds.push(
-        transaction.id,
-      );
-    }
+    expect(senderBalance!.availableBalance.toString()).toBe("9000");
+    expect(receiverBalance!.availableBalance.toString()).toBe("6000");
   });
 
   /*
    * ---------------------------------------------------------
-   * 14.5.4 Same key must not duplicate
-   * financial changes
+   * 15.5.3 Same key must not duplicate financial changes
    * ---------------------------------------------------------
    */
+
   it("should not duplicate the financial effect when the same key is reused", async () => {
     const sender = await createUser();
     const receiver = await createUser();
@@ -416,163 +474,104 @@ describe("Fund Transfer - Idempotency", () => {
     const senderAccount = await createAccount(sender.id);
     const receiverAccount = await createAccount(receiver.id);
 
-    await createBdtBalance(
-      senderAccount.id,
-      "10000",
-    );
-
-    await createBdtBalance(
-      receiverAccount.id,
-      "5000",
-    );
+    await createBdtBalance(senderAccount.id, "10000");
+    await createBdtBalance(receiverAccount.id, "5000");
 
     const accessToken = createAccessToken(sender);
-
-    const idempotencyKey =
-      createIdempotencyKey("transfer-integrity");
+    const idempotencyKey = createIdempotencyKey("transfer-integrity");
 
     const payload = {
-      senderAccount:
-        senderAccount.accountNumber,
-      receiverAccount:
-        receiverAccount.accountNumber,
+      senderAccount: senderAccount.accountNumber,
+      receiverAccount: receiverAccount.accountNumber,
       amount: "1000",
       currency: "BDT",
     };
 
-    const beforeSender =
-      await prisma.accountBalance.findUnique({
-        where: {
-          accountId_currencyCode: {
-            accountId: senderAccount.id,
-            currencyCode: "BDT",
-          },
+    const beforeSender = await prisma.accountBalance.findUnique({
+      where: {
+        accountId_currencyCode: {
+          accountId: senderAccount.id,
+          currencyCode: "BDT",
         },
-      });
+      },
+    });
 
-    const beforeReceiver =
-      await prisma.accountBalance.findUnique({
-        where: {
-          accountId_currencyCode: {
-            accountId: receiverAccount.id,
-            currencyCode: "BDT",
-          },
+    const beforeReceiver = await prisma.accountBalance.findUnique({
+      where: {
+        accountId_currencyCode: {
+          accountId: receiverAccount.id,
+          currencyCode: "BDT",
         },
-      });
+      },
+    });
 
     expect(beforeSender).not.toBeNull();
     expect(beforeReceiver).not.toBeNull();
 
+    expect(beforeSender!.availableBalance.toString()).toBe("10000");
+    expect(beforeReceiver!.availableBalance.toString()).toBe("5000");
+
     const firstResponse = await request(app)
       .post("/api/v1/transfers")
-      .set(
-        "Authorization",
-        `Bearer ${accessToken}`,
-      )
-      .set(
-        "Idempotency-Key",
-        idempotencyKey,
-      )
+      .set("Authorization", `Bearer ${accessToken}`)
+      .set("Idempotency-Key", idempotencyKey)
       .send(payload);
 
     expect(firstResponse.status).toBe(200);
 
     const secondResponse = await request(app)
       .post("/api/v1/transfers")
-      .set(
-        "Authorization",
-        `Bearer ${accessToken}`,
-      )
-      .set(
-        "Idempotency-Key",
-        idempotencyKey,
-      )
+      .set("Authorization", `Bearer ${accessToken}`)
+      .set("Idempotency-Key", idempotencyKey)
       .send(payload);
 
     expect(secondResponse.status).toBe(200);
 
-    const afterSender =
-      await prisma.accountBalance.findUnique({
-        where: {
-          accountId_currencyCode: {
-            accountId: senderAccount.id,
-            currencyCode: "BDT",
-          },
+    const afterSender = await prisma.accountBalance.findUnique({
+      where: {
+        accountId_currencyCode: {
+          accountId: senderAccount.id,
+          currencyCode: "BDT",
         },
-      });
+      },
+    });
 
-    const afterReceiver =
-      await prisma.accountBalance.findUnique({
-        where: {
-          accountId_currencyCode: {
-            accountId: receiverAccount.id,
-            currencyCode: "BDT",
-          },
+    const afterReceiver = await prisma.accountBalance.findUnique({
+      where: {
+        accountId_currencyCode: {
+          accountId: receiverAccount.id,
+          currencyCode: "BDT",
         },
-      });
+      },
+    });
 
     expect(afterSender).not.toBeNull();
     expect(afterReceiver).not.toBeNull();
 
-    expect(
-      afterSender!.availableBalance.toString(),
-    ).toBe("9000");
-
-    expect(
-      afterReceiver!.availableBalance.toString(),
-    ).toBe("6000");
+    expect(afterSender!.availableBalance.toString()).toBe("9000");
+    expect(afterReceiver!.availableBalance.toString()).toBe("6000");
 
     /*
-     * The transfer must exist only once.
+     * Exactly one transfer must exist.
      */
-    const transactions =
-      await prisma.transaction.findMany({
-        where: {
-          sourceAccountId: senderAccount.id,
-          destinationAccountId:
-            receiverAccount.id,
-          type: "INTERNAL_TRANSFER",
-        },
-      });
-
-    expect(transactions).toHaveLength(1);
-
-    const transaction = transactions[0];
-
-    /*
-     * TypeScript-safe narrowing.
-     */
-    expect(transaction).toBeDefined();
-
-    if (!transaction) {
-      throw new Error(
-        "Expected exactly one transfer transaction",
-      );
-    }
-
-    createdTransactionIds.push(
-      transaction.id,
+    const transaction = await findAndTrackSingleTransfer(
+      senderAccount.id,
+      receiverAccount.id,
     );
 
     /*
-     * One transfer creates exactly two ledger
-     * entries: one DEBIT and one CREDIT.
+     * Verify the actual financial records, not just their count.
      */
-    const ledgerEntries =
-      await prisma.ledgerEntry.count({
-        where: {
-          transactionId: transaction.id,
-        },
-      });
-
-    expect(ledgerEntries).toBe(2);
+    await expectCorrectLedgerEntries(transaction.id, "1000");
+    await expectCorrectTransactionLegs(transaction.id, "1000");
   });
 
   /*
    * ---------------------------------------------------------
-   * 14.5.5 Same key + different request rejected
+   * 15.5.4 Same key + different request is rejected
    * ---------------------------------------------------------
    */
+
   it("should reject the same idempotency key when the request payload changes", async () => {
     const sender = await createUser();
     const receiver = await createUser();
@@ -580,133 +579,90 @@ describe("Fund Transfer - Idempotency", () => {
     const senderAccount = await createAccount(sender.id);
     const receiverAccount = await createAccount(receiver.id);
 
-    await createBdtBalance(
-      senderAccount.id,
-      "10000",
-    );
-
-    await createBdtBalance(
-      receiverAccount.id,
-      "5000",
-    );
+    await createBdtBalance(senderAccount.id, "10000");
+    await createBdtBalance(receiverAccount.id, "5000");
 
     const accessToken = createAccessToken(sender);
-
-    const idempotencyKey =
-      createIdempotencyKey("transfer-conflict");
+    const idempotencyKey = createIdempotencyKey("transfer-conflict");
 
     const firstPayload = {
-      senderAccount:
-        senderAccount.accountNumber,
-      receiverAccount:
-        receiverAccount.accountNumber,
+      senderAccount: senderAccount.accountNumber,
+      receiverAccount: receiverAccount.accountNumber,
       amount: "1000",
       currency: "BDT",
     };
 
     const secondPayload = {
-      senderAccount:
-        senderAccount.accountNumber,
-      receiverAccount:
-        receiverAccount.accountNumber,
+      senderAccount: senderAccount.accountNumber,
+      receiverAccount: receiverAccount.accountNumber,
       amount: "2000",
       currency: "BDT",
     };
 
     const firstResponse = await request(app)
       .post("/api/v1/transfers")
-      .set(
-        "Authorization",
-        `Bearer ${accessToken}`,
-      )
-      .set(
-        "Idempotency-Key",
-        idempotencyKey,
-      )
+      .set("Authorization", `Bearer ${accessToken}`)
+      .set("Idempotency-Key", idempotencyKey)
       .send(firstPayload);
 
     expect(firstResponse.status).toBe(200);
 
     const secondResponse = await request(app)
       .post("/api/v1/transfers")
-      .set(
-        "Authorization",
-        `Bearer ${accessToken}`,
-      )
-      .set(
-        "Idempotency-Key",
-        idempotencyKey,
-      )
+      .set("Authorization", `Bearer ${accessToken}`)
+      .set("Idempotency-Key", idempotencyKey)
       .send(secondPayload);
 
     expect(secondResponse.status).toBe(409);
+    expect(secondResponse.body.success).toBe(false);
+    expect(secondResponse.body.error.code).toBe("CONFLICT");
 
-    expect(secondResponse.body.success).toBe(
-      false,
-    );
-
-    expect(
-      secondResponse.body.error.code,
-    ).toBe("CONFLICT");
-
-    expect(
-      secondResponse.body.error.message,
-    ).toBe(
+    expect(secondResponse.body.error.message).toBe(
       "Idempotency-Key was already used with a different request",
     );
 
     /*
-     * Only the first request should affect
-     * the sender balance.
+     * Only the original request should affect balances.
      */
-    const senderBalance =
-      await prisma.accountBalance.findUnique({
-        where: {
-          accountId_currencyCode: {
-            accountId: senderAccount.id,
-            currencyCode: "BDT",
-          },
+    const senderBalance = await prisma.accountBalance.findUnique({
+      where: {
+        accountId_currencyCode: {
+          accountId: senderAccount.id,
+          currencyCode: "BDT",
         },
-      });
+      },
+    });
+
+    const receiverBalance = await prisma.accountBalance.findUnique({
+      where: {
+        accountId_currencyCode: {
+          accountId: receiverAccount.id,
+          currencyCode: "BDT",
+        },
+      },
+    });
 
     expect(senderBalance).not.toBeNull();
+    expect(receiverBalance).not.toBeNull();
 
-    expect(
-      senderBalance!.availableBalance.toString(),
-    ).toBe("9000");
+    expect(senderBalance!.availableBalance.toString()).toBe("9000");
+    expect(receiverBalance!.availableBalance.toString()).toBe("6000");
 
-    const transactions =
-      await prisma.transaction.findMany({
-        where: {
-          sourceAccountId: senderAccount.id,
-          destinationAccountId:
-            receiverAccount.id,
-          type: "INTERNAL_TRANSFER",
-        },
-      });
-
-    expect(transactions).toHaveLength(1);
-
-    const transaction = transactions[0];
-
-    expect(transaction).toBeDefined();
-
-    if (!transaction) {
-      throw new Error(
-        "Expected exactly one transfer transaction",
-      );
-    }
-
-    createdTransactionIds.push(
-      transaction.id,
+    const transaction = await findAndTrackSingleTransfer(
+      senderAccount.id,
+      receiverAccount.id,
     );
+
+    await expectCorrectLedgerEntries(transaction.id, "1000");
+    await expectCorrectTransactionLegs(transaction.id, "1000");
   });
 
   /*
    * ---------------------------------------------------------
-   * 14.5.6 Concurrent duplicate requests
+   * 15.5.5 Concurrent duplicate requests
    * ---------------------------------------------------------
    */
+
   it("should prevent concurrent duplicate transfers with the same idempotency key", async () => {
     const sender = await createUser();
     const receiver = await createUser();
@@ -714,144 +670,90 @@ describe("Fund Transfer - Idempotency", () => {
     const senderAccount = await createAccount(sender.id);
     const receiverAccount = await createAccount(receiver.id);
 
-    await createBdtBalance(
-      senderAccount.id,
-      "10000",
-    );
-
-    await createBdtBalance(
-      receiverAccount.id,
-      "5000",
-    );
+    await createBdtBalance(senderAccount.id, "10000");
+    await createBdtBalance(receiverAccount.id, "5000");
 
     const accessToken = createAccessToken(sender);
-
-    const idempotencyKey =
-      createIdempotencyKey("transfer-concurrent");
+    const idempotencyKey = createIdempotencyKey("transfer-concurrent");
 
     const payload = {
-      senderAccount:
-        senderAccount.accountNumber,
-      receiverAccount:
-        receiverAccount.accountNumber,
+      senderAccount: senderAccount.accountNumber,
+      receiverAccount: receiverAccount.accountNumber,
       amount: "1000",
       currency: "BDT",
     };
 
-    const [
-      firstResponse,
-      secondResponse,
-    ] = await Promise.all([
+    const [firstResponse, secondResponse] = await Promise.all([
       request(app)
         .post("/api/v1/transfers")
-        .set(
-          "Authorization",
-          `Bearer ${accessToken}`,
-        )
-        .set(
-          "Idempotency-Key",
-          idempotencyKey,
-        )
+        .set("Authorization", `Bearer ${accessToken}`)
+        .set("Idempotency-Key", idempotencyKey)
         .send(payload),
 
       request(app)
         .post("/api/v1/transfers")
-        .set(
-          "Authorization",
-          `Bearer ${accessToken}`,
-        )
-        .set(
-          "Idempotency-Key",
-          idempotencyKey,
-        )
+        .set("Authorization", `Bearer ${accessToken}`)
+        .set("Idempotency-Key", idempotencyKey)
         .send(payload),
     ]);
 
     const statuses = [
       firstResponse.status,
       secondResponse.status,
-    ].sort();
+    ].sort((a, b) => a - b);
 
     /*
-     * One request must execute successfully.
+     * At least one request must execute successfully.
      */
-    expect(statuses).toEqual(
-      expect.arrayContaining([200]),
-    );
+    expect(statuses).toContain(200);
 
     /*
-     * The second concurrent request may either:
-     *
-     * 1. receive the completed replay, or
-     * 2. receive 409 while the first request
-     *    is still processing.
+     * The other request may replay successfully or
+     * return the application's documented conflict.
      */
     expect(
       statuses.every(
-        (status) =>
-          status === 200 || status === 409,
+        (status) => status === 200 || status === 409,
       ),
     ).toBe(true);
 
-    const senderBalance =
-      await prisma.accountBalance.findUnique({
-        where: {
-          accountId_currencyCode: {
-            accountId: senderAccount.id,
-            currencyCode: "BDT",
-          },
+    const senderBalance = await prisma.accountBalance.findUnique({
+      where: {
+        accountId_currencyCode: {
+          accountId: senderAccount.id,
+          currencyCode: "BDT",
         },
-      });
+      },
+    });
 
-    const receiverBalance =
-      await prisma.accountBalance.findUnique({
-        where: {
-          accountId_currencyCode: {
-            accountId: receiverAccount.id,
-            currencyCode: "BDT",
-          },
+    const receiverBalance = await prisma.accountBalance.findUnique({
+      where: {
+        accountId_currencyCode: {
+          accountId: receiverAccount.id,
+          currencyCode: "BDT",
         },
-      });
+      },
+    });
 
     expect(senderBalance).not.toBeNull();
     expect(receiverBalance).not.toBeNull();
 
-    expect(
-      senderBalance!.availableBalance.toString(),
-    ).toBe("9000");
-
-    expect(
-      receiverBalance!.availableBalance.toString(),
-    ).toBe("6000");
+    expect(senderBalance!.availableBalance.toString()).toBe("9000");
+    expect(receiverBalance!.availableBalance.toString()).toBe("6000");
 
     /*
-     * Most important assertion:
-     * exactly ONE financial transaction.
+     * Exactly one transfer transaction must exist.
      */
-    const transactions =
-      await prisma.transaction.findMany({
-        where: {
-          sourceAccountId: senderAccount.id,
-          destinationAccountId:
-            receiverAccount.id,
-          type: "INTERNAL_TRANSFER",
-        },
-      });
-
-    expect(transactions).toHaveLength(1);
-
-    const transaction = transactions[0];
-
-    expect(transaction).toBeDefined();
-
-    if (!transaction) {
-      throw new Error(
-        "Expected exactly one transfer transaction",
-      );
-    }
-
-    createdTransactionIds.push(
-      transaction.id,
+    const transaction = await findAndTrackSingleTransfer(
+      senderAccount.id,
+      receiverAccount.id,
     );
+
+    /*
+     * Concurrent requests must not create duplicate
+     * ledger entries or transaction legs.
+     */
+    await expectCorrectLedgerEntries(transaction.id, "1000");
+    await expectCorrectTransactionLegs(transaction.id, "1000");
   });
 });

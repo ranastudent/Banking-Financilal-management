@@ -17,133 +17,160 @@ describe("Fund Transfer - Ledger Entries", () => {
   const createdTransactionIds: string[] = [];
   const createdIdempotencyRecordIds: string[] = [];
 
-  afterEach(async () => {
+ afterEach(async () => {
+  /*
+   * --------------------------------------------------------
+   * 1. Delete idempotency records.
+   * --------------------------------------------------------
+   */
+
+  if (createdIdempotencyRecordIds.length > 0) {
+    await prisma.idempotencyRecord.deleteMany({
+      where: {
+        id: {
+          in: createdIdempotencyRecordIds,
+        },
+      },
+    });
+  }
+
+  /*
+   * --------------------------------------------------------
+   * 2. Delete ledger entries and transaction legs
+   *    before deleting transactions.
+   * --------------------------------------------------------
+   */
+
+  if (createdTransactionIds.length > 0) {
+    await prisma.ledgerEntry.deleteMany({
+      where: {
+        transactionId: {
+          in: createdTransactionIds,
+        },
+      },
+    });
+
+    await prisma.transactionLeg.deleteMany({
+      where: {
+        transactionId: {
+          in: createdTransactionIds,
+        },
+      },
+    });
+
+    await prisma.transaction.deleteMany({
+      where: {
+        id: {
+          in: createdTransactionIds,
+        },
+      },
+    });
+  }
+
+  /*
+   * --------------------------------------------------------
+   * 3. Delete any remaining transaction legs and ledger
+   *    entries that reference the test accounts.
+   * --------------------------------------------------------
+   */
+
+  if (createdAccountIds.length > 0) {
+    await prisma.transactionLeg.deleteMany({
+      where: {
+        accountId: {
+          in: createdAccountIds,
+        },
+      },
+    });
+
+    await prisma.ledgerEntry.deleteMany({
+      where: {
+        accountId: {
+          in: createdAccountIds,
+        },
+      },
+    });
+
     /*
-     * --------------------------------------------------------
-     * Delete idempotency records
-     * --------------------------------------------------------
+     * Delete account balances before accounts.
      */
 
-    if (createdIdempotencyRecordIds.length > 0) {
-      await prisma.idempotencyRecord.deleteMany({
-        where: {
-          id: {
-            in: createdIdempotencyRecordIds,
-          },
+    await prisma.accountBalance.deleteMany({
+      where: {
+        accountId: {
+          in: createdAccountIds,
         },
-      });
-    }
+      },
+    });
 
-    /*
-     * --------------------------------------------------------
-     * Delete ledger entries and transaction legs
-     * before deleting transactions.
-     * --------------------------------------------------------
-     */
-
-    if (createdTransactionIds.length > 0) {
-      await prisma.ledgerEntry.deleteMany({
-        where: {
-          transactionId: {
-            in: createdTransactionIds,
-          },
+    await prisma.account.deleteMany({
+      where: {
+        id: {
+          in: createdAccountIds,
         },
-      });
+      },
+    });
+  }
 
-      await prisma.transactionLeg.deleteMany({
-        where: {
-          transactionId: {
-            in: createdTransactionIds,
-          },
+  /*
+   * --------------------------------------------------------
+   * 4. Delete user-dependent records.
+   * --------------------------------------------------------
+   */
+
+  if (createdUserIds.length > 0) {
+    await prisma.auditLog.deleteMany({
+      where: {
+        userId: {
+          in: createdUserIds,
         },
-      });
+      },
+    });
 
-      await prisma.transaction.deleteMany({
-        where: {
-          id: {
-            in: createdTransactionIds,
-          },
+    await prisma.idempotencyRecord.deleteMany({
+      where: {
+        userId: {
+          in: createdUserIds,
         },
-      });
-    }
+      },
+    });
 
-    /*
-     * --------------------------------------------------------
-     * Delete account balances and accounts.
-     * --------------------------------------------------------
-     */
-
-    if (createdAccountIds.length > 0) {
-      await prisma.accountBalance.deleteMany({
-        where: {
-          accountId: {
-            in: createdAccountIds,
-          },
+    await prisma.refreshToken.deleteMany({
+      where: {
+        userId: {
+          in: createdUserIds,
         },
-      });
+      },
+    });
 
-      await prisma.account.deleteMany({
-        where: {
-          id: {
-            in: createdAccountIds,
-          },
+    await prisma.emailVerificationOtp.deleteMany({
+      where: {
+        userId: {
+          in: createdUserIds,
         },
-      });
-    }
+      },
+    });
 
-    /*
-     * --------------------------------------------------------
-     * Delete user-dependent records.
-     * --------------------------------------------------------
-     */
-
-    if (createdUserIds.length > 0) {
-      await prisma.auditLog.deleteMany({
-        where: {
-          userId: {
-            in: createdUserIds,
-          },
+    await prisma.user.deleteMany({
+      where: {
+        id: {
+          in: createdUserIds,
         },
-      });
+      },
+    });
+  }
 
-      await prisma.idempotencyRecord.deleteMany({
-        where: {
-          userId: {
-            in: createdUserIds,
-          },
-        },
-      });
+  /*
+   * --------------------------------------------------------
+   * 5. Reset tracking arrays.
+   * --------------------------------------------------------
+   */
 
-      await prisma.refreshToken.deleteMany({
-        where: {
-          userId: {
-            in: createdUserIds,
-          },
-        },
-      });
-
-      await prisma.emailVerificationOtp.deleteMany({
-        where: {
-          userId: {
-            in: createdUserIds,
-          },
-        },
-      });
-
-      await prisma.user.deleteMany({
-        where: {
-          id: {
-            in: createdUserIds,
-          },
-        },
-      });
-    }
-
-    createdIdempotencyRecordIds.length = 0;
-    createdTransactionIds.length = 0;
-    createdAccountIds.length = 0;
-    createdUserIds.length = 0;
-  });
+  createdIdempotencyRecordIds.length = 0;
+  createdTransactionIds.length = 0;
+  createdAccountIds.length = 0;
+  createdUserIds.length = 0;
+});
 
   /*
    * --------------------------------------------------------
