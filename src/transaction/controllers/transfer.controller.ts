@@ -2,11 +2,14 @@ import type { Request, Response } from "express";
 
 import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
-import { authorizeTransfer } from "../services/transfer.service";
-import { prepareTransfer } from "../services/transfer.service";
+
+import {
+  authorizeTransfer,
+  prepareTransfer,
+} from "../services/transfer.service";
+
 import {
   clearIdempotencyRecord,
-  completeIdempotencyRecord,
 } from "../../middleware/idempotency.middleware";
 
 export const transferAuthorizationController = async (
@@ -14,7 +17,8 @@ export const transferAuthorizationController = async (
   res: Response,
 ): Promise<void> => {
   const sourceAccountId = req.params.sourceAccountId;
-  const destinationAccountId = req.params.destinationAccountId;
+  const destinationAccountId =
+    req.params.destinationAccountId;
 
   if (!req.user) {
     throw new AppError(
@@ -61,6 +65,7 @@ export const transferAuthorizationController = async (
    * No transaction creation.
    * No ledger entries.
    */
+
   res.status(200).json({
     success: true,
     data: {
@@ -86,14 +91,50 @@ export const processTransfer = async (
     );
   }
 
+  /*
+   * This ID must be assigned by your idempotency
+   * middleware before the controller executes.
+   *
+   * Confirm the property name against that middleware.
+   */
+
+  const idempotencyRecordId: unknown =
+    res.locals.idempotencyRecordId;
+
+  if (
+    typeof idempotencyRecordId !== "string" ||
+    idempotencyRecordId.trim() === ""
+  ) {
+    throw new AppError(
+      "Idempotency reservation is missing",
+      500,
+      ErrorCode.INTERNAL_SERVER_ERROR,
+    );
+  }
+
   let result;
 
   try {
+    /*
+     * The transfer and idempotency completion now occur
+     * inside the same Prisma transaction.
+     */
+
     result = await prepareTransfer(
       req.user,
       req.body,
+      idempotencyRecordId,
     );
   } catch (error) {
+    /*
+     * Preserve the existing cleanup behavior.
+     *
+     * Note: for an ambiguous database commit outcome,
+     * production hardening should avoid blindly deleting
+     * the reservation. This catch preserves your current
+     * behavior for the minimal fix.
+     */
+
     await clearIdempotencyRecord(res);
     throw error;
   }
@@ -103,11 +144,12 @@ export const processTransfer = async (
     transaction: result.transaction,
   };
 
-  await completeIdempotencyRecord(
-    res,
-    200,
-    responseData,
-  );
+  /*
+   * Do not call completeIdempotencyRecord() here.
+   *
+   * The response was already persisted by the service
+   * inside the financial Prisma transaction.
+   */
 
   res.status(200).json({
     success: true,

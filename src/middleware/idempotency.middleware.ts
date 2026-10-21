@@ -7,24 +7,18 @@ import { AppError } from "../errors/AppError";
 import { ErrorCode } from "../errors/errorCodes";
 
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_RESERVATION_ATTEMPTS = 3;
 
 const stableStringify = (value: unknown): string => {
-  if (value === null) {
-    return "null";
-  }
-
-  if (value === undefined) {
-    return "undefined";
-  }
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
 
   if (typeof value !== "object") {
-    return JSON.stringify(value);
+    return JSON.stringify(value) ?? String(value);
   }
 
   if (Array.isArray(value)) {
-    return `[${value
-      .map(stableStringify)
-      .join(",")}]`;
+    return `[${value.map(stableStringify).join(",")}]`;
   }
 
   const object = value as Record<string, unknown>;
@@ -33,9 +27,7 @@ const stableStringify = (value: unknown): string => {
     .sort()
     .map(
       (key) =>
-        `${JSON.stringify(key)}:${stableStringify(
-          object[key],
-        )}`,
+        `${JSON.stringify(key)}:${stableStringify(object[key])}`,
     )
     .join(",")}}`;
 };
@@ -46,15 +38,8 @@ const createRequestHash = (
   params: Record<string, unknown>,
   body: unknown,
 ): string => {
-  const payload = stableStringify({
-    method,
-    path,
-    params,
-    body,
-  });
-
   return createHash("sha256")
-    .update(payload)
+    .update(stableStringify({ method, path, params, body }))
     .digest("hex");
 };
 
@@ -71,6 +56,9 @@ const sendIdempotentResponse = (
   });
 };
 
+const conflict = (message: string): AppError =>
+  new AppError(message, 409, ErrorCode.CONFLICT);
+
 export const requireIdempotencyKey: RequestHandler = async (
   req,
   res,
@@ -79,10 +67,6 @@ export const requireIdempotencyKey: RequestHandler = async (
   try {
     const user = req.user;
 
-    /*
-     * Authentication must happen before idempotency
-     * because the record is scoped by userId.
-     */
     if (!user) {
       throw new AppError(
         "Authentication is required",
@@ -91,9 +75,6 @@ export const requireIdempotencyKey: RequestHandler = async (
       );
     }
 
-    /*
-     * Read and validate the Idempotency-Key header.
-     */
     const rawKey = req.get("Idempotency-Key");
 
     if (!rawKey) {
@@ -122,9 +103,6 @@ export const requireIdempotencyKey: RequestHandler = async (
       );
     }
 
-    /*
-     * HTTP visible ASCII characters only.
-     */
     if (!/^[\x21-\x7E]+$/.test(key)) {
       throw new AppError(
         "Idempotency-Key contains invalid characters",
@@ -133,17 +111,8 @@ export const requireIdempotencyKey: RequestHandler = async (
       );
     }
 
-    /*
-     * Exclude query parameters from the idempotency
-     * fingerprint while keeping the route and params.
-     */
-    const path =
-      req.originalUrl.split("?")[0] ??
-      req.path;
+    const path = req.originalUrl.split("?")[0] ?? req.path;
 
-    /*
-     * The same key must represent the same operation.
-     */
     const requestHash = createRequestHash(
       req.method,
       path,
@@ -151,14 +120,6 @@ export const requireIdempotencyKey: RequestHandler = async (
       req.body,
     );
 
-    /*
-     * Idempotency scope:
-     *
-     *     Idempotency-Key + User
-     *
-     * Therefore the same key can be used by
-     * different users independently.
-     */
     const where = {
       key_userId: {
         key,
@@ -171,8 +132,6 @@ export const requireIdempotencyKey: RequestHandler = async (
         where,
         select: {
           id: true,
-          key: true,
-          userId: true,
           requestHash: true,
           responseStatus: true,
           responseBody: true,
@@ -180,257 +139,134 @@ export const requireIdempotencyKey: RequestHandler = async (
         },
       });
 
-    let existing =
-      await findExistingRecord();
-
-    /*
-     * 24-hour TTL handling.
-     *
-     * expiresAt was already stored before,
-     * but it was not previously checked.
-     *
-     * If an old record has expired, remove it and
-     * allow this key to be used again.
-     */
-    if (
-      existing &&
-      existing.expiresAt <= new Date()
-    ) {
-      await prisma.idempotencyRecord.deleteMany({
-        where: {
-          id: existing.id,
-          expiresAt: {
-            lte: new Date(),
-          },
-        },
-      });
-
-      /*
-       * Re-read after deletion.
-       *
-       * This also handles a race where another
-       * request creates a new record after deletion.
-       */
-      existing =
-        await findExistingRecord();
-    }
-
-    /*
-     * Existing active record.
-     */
-    if (existing) {
-      /*
-       * Same key but different request.
-       */
-      if (
-        existing.requestHash !== requestHash
-      ) {
-        throw new AppError(
+    const handleExistingRecord = (
+      record: NonNullable<
+        Awaited<ReturnType<typeof findExistingRecord>>
+      >,
+    ): boolean => {
+      if (record.requestHash !== requestHash) {
+        throw conflict(
           "Idempotency-Key was already used with a different request",
-          409,
-          ErrorCode.CONFLICT,
         );
       }
 
-      /*
-       * Previous request completed successfully
-       * and the original response is available.
-       *
-       * Return it without executing the financial
-       * operation again.
-       */
       if (
-        existing.responseStatus !== null &&
-        existing.responseBody !== null
+        record.responseStatus !== null &&
+        record.responseBody !== null
       ) {
-        return sendIdempotentResponse(
+        sendIdempotentResponse(
           req,
           res,
-          existing.responseStatus,
-          existing.responseBody,
+          record.responseStatus,
+          record.responseBody,
         );
+
+        return true;
       }
 
-      /*
-       * A matching request is currently being
-       * processed by another request.
-       */
-      throw new AppError(
+      throw conflict(
         "A request with this Idempotency-Key is currently being processed",
-        409,
-        ErrorCode.CONFLICT,
       );
-    }
+    };
 
-    /*
-     * No existing record.
-     *
-     * Create a reservation before the financial
-     * operation starts.
-     *
-     * The database unique constraint protects
-     * against concurrent requests using the same
-     * key for the same user.
-     */
-    try {
-      const record =
-        await prisma.idempotencyRecord.create({
+    for (
+      let attempt = 0;
+      attempt < MAX_RESERVATION_ATTEMPTS;
+      attempt++
+    ) {
+      const existing = await findExistingRecord();
+
+      if (existing) {
+        if (existing.expiresAt <= new Date()) {
+          await prisma.idempotencyRecord.deleteMany({
+            where: {
+              id: existing.id,
+              expiresAt: {
+                lte: new Date(),
+              },
+            },
+          });
+
+          continue;
+        }
+
+        if (handleExistingRecord(existing)) {
+          return;
+        }
+      }
+
+      try {
+        const record = await prisma.idempotencyRecord.create({
           data: {
             key,
             userId: user.id,
             requestHash,
-            expiresAt: new Date(
-              Date.now() +
-                IDEMPOTENCY_TTL_MS,
-            ),
+            expiresAt: new Date(Date.now() + IDEMPOTENCY_TTL_MS),
           },
           select: {
             id: true,
           },
         });
 
-      /*
-       * The controller will use this ID when
-       * completing or clearing the record.
-       */
-      res.locals.idempotencyRecordId =
-        record.id;
+        res.locals.idempotencyRecordId = record.id;
 
-      /*
-       * If business validation produces a 4xx
-       * response, release the reservation so
-       * the client can retry.
-       *
-       * We intentionally keep the record on 5xx.
-       * A financial transaction may have committed
-       * even if response processing failed.
-       */
-      res.once("finish", () => {
+        res.once("finish", () => {
+          if (res.statusCode >= 400 && res.statusCode < 500) {
+            void prisma.idempotencyRecord
+              .deleteMany({
+                where: {
+                  id: record.id,
+                  responseStatus: null,
+                },
+              })
+              .catch(() => {});
+          }
+        });
+
+        next();
+        return;
+      } catch (error) {
         if (
-          res.statusCode >= 400 &&
-          res.statusCode < 500
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002"
         ) {
-          void prisma.idempotencyRecord
-            .delete({
-              where: {
-                id: record.id,
-              },
-            })
-            .catch(() => {
-              /*
-               * The HTTP response is already complete.
-               * Do not change it because cleanup failed.
-               */
-            });
-        }
-      });
-    } catch (error) {
-      /*
-       * P2002 means another concurrent request
-       * created the same (key, userId) record first.
-       */
-      if (
-        error instanceof
-          Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2002"
-      ) {
-        const concurrentRecord =
-          await prisma.idempotencyRecord.findUnique(
-            {
-              where,
-              select: {
-                id: true,
-                requestHash: true,
-                responseStatus: true,
-                responseBody: true,
-                expiresAt: true,
-              },
-            },
-          );
-
-        /*
-         * The record disappeared between the
-         * unique-constraint failure and this lookup.
-         * Re-throw the original database error.
-         */
-        if (!concurrentRecord) {
-          throw error;
+          continue;
         }
 
-        /*
-         * Same key but different request.
-         */
-        if (
-          concurrentRecord.requestHash !==
-          requestHash
-        ) {
-          throw new AppError(
-            "Idempotency-Key was already used with a different request",
-            409,
-            ErrorCode.CONFLICT,
-          );
-        }
-
-        /*
-         * The first request has completed.
-         */
-        if (
-          concurrentRecord.responseStatus !==
-            null &&
-          concurrentRecord.responseBody !== null
-        ) {
-          return sendIdempotentResponse(
-            req,
-            res,
-            concurrentRecord.responseStatus,
-            concurrentRecord.responseBody,
-          );
-        }
-
-        /*
-         * The first request is still processing.
-         */
-        throw new AppError(
-          "A request with this Idempotency-Key is currently being processed",
-          409,
-          ErrorCode.CONFLICT,
-        );
+        throw error;
       }
-
-      throw error;
     }
 
-    next();
+    const existing = await findExistingRecord();
+
+    if (existing && existing.expiresAt > new Date()) {
+      if (handleExistingRecord(existing)) {
+        return;
+      }
+    }
+
+    throw conflict(
+      "Unable to reserve this Idempotency-Key. Please retry the request.",
+    );
   } catch (error) {
     next(error);
   }
 };
 
-/*
- * Store the final response on the idempotency record.
- *
- * This allows a later retry using the same key
- * to replay the exact logical response without
- * executing the financial operation again.
- */
 export const completeIdempotencyRecord = async (
   res: Parameters<RequestHandler>[1],
   responseStatus: number,
   responseBody: unknown,
 ): Promise<void> => {
-  const recordId =
-    res.locals.idempotencyRecordId as
-      | string
-      | undefined;
+  const recordId = res.locals.idempotencyRecordId as
+    | string
+    | undefined;
 
-  if (!recordId) {
-    return;
-  }
+  if (!recordId) return;
 
-  const jsonSafeBody =
-    JSON.parse(
-      JSON.stringify(responseBody),
-    ) as Prisma.InputJsonValue;
+  const jsonSafeBody = JSON.parse(
+    JSON.stringify(responseBody),
+  ) as Prisma.InputJsonValue;
 
   await prisma.idempotencyRecord.update({
     where: {
@@ -443,32 +279,23 @@ export const completeIdempotencyRecord = async (
   });
 };
 
-/*
- * Remove the idempotency reservation after a
- * failed business operation when retrying is safe.
- */
 export const clearIdempotencyRecord = async (
   res: Parameters<RequestHandler>[1],
 ): Promise<void> => {
-  const recordId =
-    res.locals.idempotencyRecordId as
-      | string
-      | undefined;
+  const recordId = res.locals.idempotencyRecordId as
+    | string
+    | undefined;
 
-  if (!recordId) {
-    return;
-  }
+  if (!recordId) return;
 
   try {
-    await prisma.idempotencyRecord.delete({
+    await prisma.idempotencyRecord.deleteMany({
       where: {
         id: recordId,
+        responseStatus: null,
       },
     });
   } catch {
-    /*
-     * Never hide the original financial-operation
-     * error because cleanup failed.
-     */
+    // Preserve the original operation error.
   }
 };

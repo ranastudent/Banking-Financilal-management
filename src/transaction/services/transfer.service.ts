@@ -49,7 +49,8 @@ type TransferFailureStage =
   | "AFTER_TRANSACTION_CREATION"
   | "AFTER_FIRST_LEDGER_ENTRY"
   | "AFTER_SECOND_LEDGER_ENTRY"
-  | "AFTER_AUDIT_CREATION";
+  | "AFTER_AUDIT_CREATION"
+  | "BEFORE_IDEMPOTENCY_COMPLETION";
 
 const throwIfTransferTestFailure = (
   stage: TransferFailureStage,
@@ -71,6 +72,7 @@ const throwIfTransferTestFailure = (
 };
 
 /* Non-transactional account pre-resolution */
+
 /*
  * Stage 2H-C1:
  * Resolve accounts before opening the interactive transaction.
@@ -247,6 +249,7 @@ const updateBalance = async (
 export const prepareTransfer = async (
   user: AuthUser,
   input: TransferInput,
+  idempotencyRecordId?: string,
 ) => {
   const amount = new Prisma.Decimal(input.amount);
   const perfTransferId = randomUUID();
@@ -390,7 +393,10 @@ export const prepareTransfer = async (
     perfTransferId,
     outsideTransaction: true,
     durationMs: Number(
-      (performance.now() - authorizationStart).toFixed(2),
+      (
+        performance.now() -
+        authorizationStart
+      ).toFixed(2),
     ),
   });
 
@@ -516,11 +522,6 @@ export const prepareTransfer = async (
 
         /*
          * 2. Transactional authorization re-check
-         *
-         * The preflight authorization prevented opening
-         * unnecessary transactions.
-         *
-         * This check protects the authoritative locked state.
          */
 
         if (
@@ -547,9 +548,6 @@ export const prepareTransfer = async (
 
         /*
          * 3. Transactional account status re-check
-         *
-         * The preflight status check is only an early rejection.
-         * The locked account status is authoritative.
          */
 
         if (sender.status !== "ACTIVE") {
@@ -570,8 +568,6 @@ export const prepareTransfer = async (
 
         /*
          * 4. Lock both balances in one SQL query
-         *
-         * MUST remain inside the transaction.
          */
 
         const balanceReadStart = performance.now();
@@ -616,14 +612,10 @@ export const prepareTransfer = async (
 
         /*
          * 5. Authoritative balance check
-         *
-         * The balance is protected by FOR UPDATE.
          */
 
         if (
-          senderBalance.availableBalance.lt(
-            amount,
-          )
+          senderBalance.availableBalance.lt(amount)
         ) {
           throw new AppError(
             "Insufficient balance",
@@ -912,42 +904,37 @@ export const prepareTransfer = async (
           "AFTER_AUDIT_CREATION",
         );
 
-        perfLog(
-          "transaction callback completed",
-          {
-            perfTransferId,
-            callbackDurationMs: Number(
-              (
-                performance.now() -
-                callbackStart
-              ).toFixed(2),
-            ),
-          },
-        );
+        /*
+         * 12. Prepare the existing service result.
+         *
+         * Keep this structure compatible with the
+         * current controller and any existing callers.
+         */
 
-        return {
+        const transferResult = {
           transaction: {
             ...transaction,
-            amount:
-              transaction.amount.toString(),
+            amount: transaction.amount.toString(),
           },
 
-          senderAccount:
-            sender.account_number,
+          senderAccount: sender.account_number,
 
-          receiverAccount:
-            receiver.account_number,
+          receiverAccount: receiver.account_number,
 
           amount: amount.toString(),
+
           currency: currency.code,
 
           balance: {
             senderBefore:
               senderBalance.availableBalance.toString(),
+
             senderAfter:
               senderAfter.availableBalance.toString(),
+
             receiverBefore:
               receiverBalance.availableBalance.toString(),
+
             receiverAfter:
               receiverAfter.availableBalance.toString(),
           },
@@ -975,6 +962,65 @@ export const prepareTransfer = async (
 
           auditLog,
         };
+
+        /*
+         * 13. Complete idempotency inside this transaction.
+         *
+         * If this update fails, throwing an error aborts
+         * the transaction, rolling back the financial writes.
+         */
+
+        if (idempotencyRecordId) {
+          throwIfTransferTestFailure(
+            "BEFORE_IDEMPOTENCY_COMPLETION",
+          );
+
+          const responseData = {
+            message:
+              "Fund transfer completed successfully",
+            transaction: transferResult.transaction,
+          };
+
+          const completion =
+            await tx.idempotencyRecord.updateMany({
+              where: {
+                id: idempotencyRecordId,
+                userId: user.id,
+                responseStatus: null,
+              },
+
+              data: {
+                responseStatus: 200,
+                responseBody:
+                  JSON.parse(
+                    JSON.stringify(responseData),
+                  ) as Prisma.InputJsonValue,
+              },
+            });
+
+          if (completion.count !== 1) {
+            throw new AppError(
+              "Unable to complete idempotency record",
+              409,
+              ErrorCode.CONFLICT,
+            );
+          }
+        }
+
+        perfLog(
+          "transaction callback completed",
+          {
+            perfTransferId,
+            callbackDurationMs: Number(
+              (
+                performance.now() -
+                callbackStart
+              ).toFixed(2),
+            ),
+          },
+        );
+
+        return transferResult;
       },
     );
 
