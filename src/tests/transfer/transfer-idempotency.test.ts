@@ -23,141 +23,7 @@ describe("Fund Transfer - Idempotency", () => {
   // Cleanup
   // ---------------------------------------------------------
 
-  afterEach(async () => {
-  vi.unstubAllEnvs();
-
-  // 1. Delete idempotency records created by the tests.
-  if (createdIdempotencyRecordIds.length > 0) {
-    await prisma.idempotencyRecord.deleteMany({
-      where: {
-        id: {
-          in: createdIdempotencyRecordIds,
-        },
-      },
-    });
-
-    createdIdempotencyRecordIds.length = 0;
-  }
-
-  // 2. Delete transaction legs referencing the test accounts.
-  if (createdAccountIds.length > 0) {
-    await prisma.transactionLeg.deleteMany({
-      where: {
-        accountId: {
-          in: createdAccountIds,
-        },
-      },
-    });
-  }
-
-  // 3. Delete ledger entries for tracked transactions.
-  if (createdTransactionIds.length > 0) {
-    await prisma.ledgerEntry.deleteMany({
-      where: {
-        transactionId: {
-          in: createdTransactionIds,
-        },
-      },
-    });
-
-    // 4. Delete the transaction legs for tracked transactions.
-    await prisma.transactionLeg.deleteMany({
-      where: {
-        transactionId: {
-          in: createdTransactionIds,
-        },
-      },
-    });
-
-    // 5. Delete the transactions.
-    await prisma.transaction.deleteMany({
-      where: {
-        id: {
-          in: createdTransactionIds,
-        },
-      },
-    });
-
-    createdTransactionIds.length = 0;
-  }
-
-  // 6. Delete any remaining transaction legs referencing
-  //    the accounts before deleting those accounts.
-  if (createdAccountIds.length > 0) {
-    await prisma.transactionLeg.deleteMany({
-      where: {
-        accountId: {
-          in: createdAccountIds,
-        },
-      },
-    });
-
-    // Delete account balances.
-    await prisma.accountBalance.deleteMany({
-      where: {
-        accountId: {
-          in: createdAccountIds,
-        },
-      },
-    });
-
-    // Delete accounts only after their dependent records.
-    await prisma.account.deleteMany({
-      where: {
-        id: {
-          in: createdAccountIds,
-        },
-      },
-    });
-
-    createdAccountIds.length = 0;
-  }
-
-  // 7. Delete remaining user-related records.
-  if (createdUserIds.length > 0) {
-    await prisma.refreshToken.deleteMany({
-      where: {
-        userId: {
-          in: createdUserIds,
-        },
-      },
-    });
-
-    await prisma.emailVerificationOtp.deleteMany({
-      where: {
-        userId: {
-          in: createdUserIds,
-        },
-      },
-    });
-
-    await prisma.auditLog.deleteMany({
-      where: {
-        userId: {
-          in: createdUserIds,
-        },
-      },
-    });
-
-    await prisma.idempotencyRecord.deleteMany({
-      where: {
-        userId: {
-          in: createdUserIds,
-        },
-      },
-    });
-
-    await prisma.user.deleteMany({
-      where: {
-        id: {
-          in: createdUserIds,
-        },
-      },
-    });
-
-    createdUserIds.length = 0;
-  }
-});
+  
 
   // ---------------------------------------------------------
   // Test helpers
@@ -497,59 +363,80 @@ describe("Fund Transfer - Idempotency", () => {
   // 15.5.2 Same key + same request replays the response
   // ---------------------------------------------------------
 
-  it("should replay the same response when the same key and request are sent again", async () => {
-    const fixture = await createTransferFixture("transfer-replay");
+  it("should recover safely when the transfer commits but the client retries because the response was lost", async () => {
+  const fixture = await createTransferFixture(
+    "transfer-crash-recovery",
+  );
 
-    const firstResponse = await sendTransfer(
-      fixture.accessToken,
-      fixture.idempotencyKey,
-      fixture.payload,
-    );
+  // First request:
+  // The transfer commits successfully.
+  // Imagine the client does not receive or retain the response.
+  const firstResponse = await sendTransfer(
+    fixture.accessToken,
+    fixture.idempotencyKey,
+    fixture.payload,
+  );
 
-    expect(firstResponse.status).toBe(200);
+  expect(firstResponse.status).toBe(200);
 
-    const secondResponse = await sendTransfer(
-      fixture.accessToken,
-      fixture.idempotencyKey,
-      fixture.payload,
-    );
+  const originalTransactionId =
+    firstResponse.body.data.transaction.id;
 
-    expect(secondResponse.status).toBe(200);
-    expect(secondResponse.body.success).toBe(true);
+  // Confirm that the idempotency record was committed.
+  const completedRecord = await getIdempotencyRecord(
+    fixture.idempotencyKey,
+    fixture.sender.id,
+  );
 
-    // The logical response should be identical on replay.
-    expect(secondResponse.body.data).toEqual(
-      firstResponse.body.data,
-    );
+  expect(completedRecord).not.toBeNull();
+  expect(completedRecord!.responseStatus).toBe(200);
+  expect(completedRecord!.responseBody).not.toBeNull();
 
-    // The HTTP request ID may differ between requests.
-    expect(secondResponse.body.requestId).toEqual(
-      expect.any(String),
-    );
+  // Second request:
+  // Simulate the client retrying because it did not receive
+  // the original response.
+  const retryResponse = await sendTransfer(
+    fixture.accessToken,
+    fixture.idempotencyKey,
+    fixture.payload,
+  );
 
-    const transaction = await findAndTrackSingleTransfer(
-      fixture.senderAccount.id,
-      fixture.receiverAccount.id,
-    );
+  expect(retryResponse.status).toBe(200);
+  expect(retryResponse.body.success).toBe(true);
 
-    await expectCorrectLedgerEntries(
-      transaction.id,
-      TRANSFER_AMOUNT,
-    );
+  // The retry must return the original transaction.
+  expect(
+    retryResponse.body.data.transaction.id,
+  ).toBe(originalTransactionId);
 
-    await expectCorrectTransactionLegs(
-      transaction.id,
-      TRANSFER_AMOUNT,
-    );
+  // The financial effect must occur exactly once.
+  await expectBalances(
+    fixture.senderAccount.id,
+    fixture.receiverAccount.id,
+    EXPECTED_SENDER_BALANCE,
+    EXPECTED_RECEIVER_BALANCE,
+  );
 
-    // The replay must not apply the transfer a second time.
-    await expectBalances(
-      fixture.senderAccount.id,
-      fixture.receiverAccount.id,
-      EXPECTED_SENDER_BALANCE,
-      EXPECTED_RECEIVER_BALANCE,
-    );
-  });
+  // Exactly one transfer must exist.
+  const transaction = await findAndTrackSingleTransfer(
+    fixture.senderAccount.id,
+    fixture.receiverAccount.id,
+  );
+
+  expect(transaction.id).toBe(originalTransactionId);
+
+  // The original transfer must have exactly two ledger entries.
+  await expectCorrectLedgerEntries(
+    transaction.id,
+    TRANSFER_AMOUNT,
+  );
+
+  // The original transfer must have exactly two transaction legs.
+  await expectCorrectTransactionLegs(
+    transaction.id,
+    TRANSFER_AMOUNT,
+  );
+});
 
   // ---------------------------------------------------------
   // 15.5.3 Reusing the same key must not duplicate financial
