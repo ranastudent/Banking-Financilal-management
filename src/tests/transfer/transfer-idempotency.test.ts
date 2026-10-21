@@ -778,4 +778,293 @@ describe("Fund Transfer - Idempotency", () => {
     expect(record!.responseStatus).toBe(200);
     expect(record!.responseBody).not.toBeNull();
   });
+
+  it("should roll back the transfer if a failure occurs after response persistence but before commit", async () => {
+  const fixture = await createTransferFixture(
+    "transfer-response-persistence-rollback",
+  );
+
+  vi.stubEnv(
+    "TRANSFER_TEST_FAILURE_STAGE",
+    "AFTER_IDEMPOTENCY_COMPLETION",
+  );
+
+  let failedResponse;
+
+  try {
+    failedResponse = await sendTransfer(
+      fixture.accessToken,
+      fixture.idempotencyKey,
+      fixture.payload,
+    );
+  } finally {
+    vi.unstubAllEnvs();
+  }
+
+  expect(failedResponse).toBeDefined();
+  expect(failedResponse!.status).toBe(500);
+
+  // The financial transfer must not have committed.
+  await expectNoTransfer(
+    fixture.senderAccount.id,
+    fixture.receiverAccount.id,
+  );
+
+  // Both balances must remain unchanged.
+  await expectBalances(
+    fixture.senderAccount.id,
+    fixture.receiverAccount.id,
+    INITIAL_SENDER_BALANCE,
+    INITIAL_RECEIVER_BALANCE,
+  );
+
+  // No completed idempotency response should survive the rollback.
+  const record = await getIdempotencyRecord(
+    fixture.idempotencyKey,
+    fixture.sender.id,
+  );
+
+  if (record) {
+    expect(record.responseStatus).toBeNull();
+    expect(record.responseBody).toBeNull();
+  }
+
+  // Retry the same request after removing the injected failure.
+  const retryResponse = await sendTransfer(
+    fixture.accessToken,
+    fixture.idempotencyKey,
+    fixture.payload,
+  );
+
+  expect(retryResponse.status).toBe(200);
+  expect(retryResponse.body.success).toBe(true);
+
+  // The retry must execute exactly one transfer.
+  await expectBalances(
+    fixture.senderAccount.id,
+    fixture.receiverAccount.id,
+    EXPECTED_SENDER_BALANCE,
+    EXPECTED_RECEIVER_BALANCE,
+  );
+
+  const transaction = await findAndTrackSingleTransfer(
+    fixture.senderAccount.id,
+    fixture.receiverAccount.id,
+  );
+
+  await expectCorrectLedgerEntries(
+    transaction.id,
+    TRANSFER_AMOUNT,
+  );
+
+  await expectCorrectTransactionLegs(
+    transaction.id,
+    TRANSFER_AMOUNT,
+  );
+
+  const completedRecord = await getIdempotencyRecord(
+    fixture.idempotencyKey,
+    fixture.sender.id,
+  );
+
+  expect(completedRecord).not.toBeNull();
+  expect(completedRecord!.responseStatus).toBe(200);
+  expect(completedRecord!.responseBody).not.toBeNull();
+  });
+
+  // ---------------------------------------------------------
+// 16.11.1 Expired idempotency key
+// ---------------------------------------------------------
+
+it("should allow a new transfer when the previous idempotency key has expired", async () => {
+  const fixture = await createTransferFixture(
+    "transfer-expired-key",
+  );
+
+  // First request: the transfer should succeed.
+  const firstResponse = await sendTransfer(
+    fixture.accessToken,
+    fixture.idempotencyKey,
+    fixture.payload,
+  );
+
+  expect(firstResponse.status).toBe(200);
+
+  // Confirm the original idempotency record exists.
+  const originalRecord = await getIdempotencyRecord(
+    fixture.idempotencyKey,
+    fixture.sender.id,
+  );
+
+  expect(originalRecord).not.toBeNull();
+  expect(originalRecord!.responseStatus).toBe(200);
+
+  // Simulate expiration without waiting 24 hours.
+  await prisma.idempotencyRecord.update({
+    where: {
+      key_userId: {
+        key: fixture.idempotencyKey,
+        userId: fixture.sender.id,
+      },
+    },
+    data: {
+      expiresAt: new Date(Date.now() - 60_000),
+    },
+  });
+
+  // Retry using the same key and identical payload.
+  // The expired record should be removed and a new
+  // idempotency reservation should be created.
+  const secondResponse = await sendTransfer(
+    fixture.accessToken,
+    fixture.idempotencyKey,
+    fixture.payload,
+  );
+
+  expect(secondResponse.status).toBe(200);
+  expect(secondResponse.body.success).toBe(true);
+
+  // Both transfers should have executed.
+  await expectBalances(
+    fixture.senderAccount.id,
+    fixture.receiverAccount.id,
+    "8000",
+    "7000",
+  );
+
+  // Verify that exactly two transfer transactions exist.
+  const transactions = await prisma.transaction.findMany({
+    where: {
+      sourceAccountId: fixture.senderAccount.id,
+      destinationAccountId: fixture.receiverAccount.id,
+      type: "INTERNAL_TRANSFER",
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  expect(transactions).toHaveLength(2);
+
+  // Track both transactions so the existing afterEach
+  // cleanup can remove their dependent records.
+  createdTransactionIds.push(
+    ...transactions.map((transaction) => transaction.id),
+  );
+
+  // A new, completed idempotency record should exist.
+  const renewedRecord = await getIdempotencyRecord(
+    fixture.idempotencyKey,
+    fixture.sender.id,
+  );
+
+  expect(renewedRecord).not.toBeNull();
+  expect(renewedRecord!.responseStatus).toBe(200);
+  expect(renewedRecord!.responseBody).not.toBeNull();
+});
+
+// ---------------------------------------------------------
+// 16.11.2 Cross-user idempotency-key isolation
+// ---------------------------------------------------------
+
+it("should isolate the same idempotency key between different users", async () => {
+  const fixtureA = await createTransferFixture(
+    "transfer-user-a",
+  );
+
+  const fixtureB = await createTransferFixture(
+    "transfer-user-b",
+  );
+
+  // Both users deliberately use the same key.
+  const sharedKey = "shared-transfer-key-16-11";
+
+  // Customer A performs their transfer.
+  const responseA = await sendTransfer(
+    fixtureA.accessToken,
+    sharedKey,
+    fixtureA.payload,
+  );
+
+  expect(responseA.status).toBe(200);
+  expect(responseA.body.success).toBe(true);
+
+  // Customer B uses the same key but has a different user ID
+  // and their own transfer accounts.
+  const responseB = await sendTransfer(
+    fixtureB.accessToken,
+    sharedKey,
+    fixtureB.payload,
+  );
+
+  expect(responseB.status).toBe(200);
+  expect(responseB.body.success).toBe(true);
+
+  // Both transfers must execute independently.
+  await expectBalances(
+    fixtureA.senderAccount.id,
+    fixtureA.receiverAccount.id,
+    EXPECTED_SENDER_BALANCE,
+    EXPECTED_RECEIVER_BALANCE,
+  );
+
+  await expectBalances(
+    fixtureB.senderAccount.id,
+    fixtureB.receiverAccount.id,
+    EXPECTED_SENDER_BALANCE,
+    EXPECTED_RECEIVER_BALANCE,
+  );
+
+  // Each user must have a separate idempotency record.
+  const recordA = await getIdempotencyRecord(
+    sharedKey,
+    fixtureA.sender.id,
+  );
+
+  const recordB = await getIdempotencyRecord(
+    sharedKey,
+    fixtureB.sender.id,
+  );
+
+  expect(recordA).not.toBeNull();
+  expect(recordB).not.toBeNull();
+
+  expect(recordA!.responseStatus).toBe(200);
+  expect(recordB!.responseStatus).toBe(200);
+
+  expect(recordA!.id).not.toBe(recordB!.id);
+
+  // Confirm one transfer was created for each customer.
+  const transactionsA = await prisma.transaction.findMany({
+    where: {
+      sourceAccountId: fixtureA.senderAccount.id,
+      destinationAccountId: fixtureA.receiverAccount.id,
+      type: "INTERNAL_TRANSFER",
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  const transactionsB = await prisma.transaction.findMany({
+    where: {
+      sourceAccountId: fixtureB.senderAccount.id,
+      destinationAccountId: fixtureB.receiverAccount.id,
+      type: "INTERNAL_TRANSFER",
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  expect(transactionsA).toHaveLength(1);
+  expect(transactionsB).toHaveLength(1);
+
+  // Track transactions for cleanup.
+  createdTransactionIds.push(
+    ...transactionsA.map((transaction) => transaction.id),
+    ...transactionsB.map((transaction) => transaction.id),
+  );
+});
+  
 });

@@ -50,7 +50,8 @@ type TransferFailureStage =
   | "AFTER_FIRST_LEDGER_ENTRY"
   | "AFTER_SECOND_LEDGER_ENTRY"
   | "AFTER_AUDIT_CREATION"
-  | "BEFORE_IDEMPOTENCY_COMPLETION";
+  | "BEFORE_IDEMPOTENCY_COMPLETION"
+  | "AFTER_IDEMPOTENCY_COMPLETION";
 
 const throwIfTransferTestFailure = (
   stage: TransferFailureStage,
@@ -1005,6 +1006,9 @@ export const prepareTransfer = async (
               ErrorCode.CONFLICT,
             );
           }
+          throwIfTransferTestFailure(
+               "AFTER_IDEMPOTENCY_COMPLETION",
+          );
         }
 
         perfLog(
