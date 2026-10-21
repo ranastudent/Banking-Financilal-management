@@ -662,7 +662,11 @@ export const prepareWithdrawal = async (
         createdAt: auditLog.createdAt,
       },
     };
-  });
+  },
+  {
+    isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+  },
+ );
 };
 
 /*
