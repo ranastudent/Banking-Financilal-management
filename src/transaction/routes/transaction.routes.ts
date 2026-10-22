@@ -3,7 +3,10 @@ import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate";
 import { authorize } from "../../middleware/authorize";
 import { validate } from "../../middleware/validate";
-import { transferRateLimiter } from "../../middleware/rateLimiter";
+import {
+  transferRateLimiter,
+  transactionHistoryRateLimiter,
+} from "../../middleware/rateLimiter";
 
 import {
   authorizeDeposit,
@@ -48,6 +51,7 @@ const router = Router();
 router.get(
   "/",
   authenticate,
+  transactionHistoryRateLimiter,
   authorize("CUSTOMER", "ADMIN", "SUPPORT", "AUDITOR"),
   validate({
     query: transactionHistoryQuerySchema,
@@ -96,6 +100,7 @@ router.post(
 router.get(
   "/:transactionId",
   authenticate,
+  transactionHistoryRateLimiter,
   authorize("CUSTOMER", "ADMIN", "SUPPORT", "AUDITOR"),
   getTransaction,
 );

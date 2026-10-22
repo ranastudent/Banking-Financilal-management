@@ -1,6 +1,7 @@
 import { Router } from "express";
 
 import { authenticate } from "../../middleware/authenticate";
+import { transactionHistoryRateLimiter } from "../../middleware/rateLimiter";
 import { authorize } from "../../middleware/authorize";
 import { validate } from "../../middleware/validate";
 
@@ -19,6 +20,7 @@ const router = Router();
 router.get(
   "/",
   authenticate,
+  transactionHistoryRateLimiter,
   authorize("AUDITOR"),
   validate({
     query: auditorTransactionQuerySchema,
@@ -29,6 +31,7 @@ router.get(
 router.get(
   "/:transactionId",
   authenticate,
+  transactionHistoryRateLimiter,
   authorize("AUDITOR"),
   validate({
     params: auditorTransactionParamsSchema,

@@ -1,6 +1,7 @@
 import { Router } from "express";
 
 import { authenticate } from "../../middleware/authenticate";
+import { transactionHistoryRateLimiter } from "../../middleware/rateLimiter";
 import { authorize } from "../../middleware/authorize";
 import { validate } from "../../middleware/validate";
 
@@ -18,6 +19,7 @@ const router = Router();
 router.get(
   "/:customerId/transactions",
   authenticate,
+  transactionHistoryRateLimiter,
   authorize("SUPPORT"),
   validate({
     params: customerTransactionParamsSchema,

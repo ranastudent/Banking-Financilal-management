@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate";
+import { transactionHistoryRateLimiter } from "../../middleware/rateLimiter";
 import { authorize } from "../../middleware/authorize";
 import {
   getTransaction,
@@ -11,6 +12,7 @@ const router = Router();
 router.get(
   "/",
   authenticate,
+  transactionHistoryRateLimiter,
   authorize("ADMIN"),
   getTransactions,
 );
@@ -18,6 +20,7 @@ router.get(
 router.get(
   "/:transactionId",
   authenticate,
+  transactionHistoryRateLimiter,
   authorize("ADMIN"),
   getTransaction,
 );

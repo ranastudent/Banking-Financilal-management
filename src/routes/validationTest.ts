@@ -4,7 +4,7 @@ import { validate } from "../middleware/validate";
 import {accountNumberSchema,testValidationSchema, beneficiarySchema, paginationSchema,} from "../schemas/validation";
 import { z } from "zod";
 import { sendSuccess } from "../utils/apiResponse";
-import { authRateLimiter, otpRateLimiter, } from "../middleware/rateLimiter";
+import { authRateLimiter, otpRateLimiter } from "../middleware/rateLimiter";
 
 const router = Router();
 

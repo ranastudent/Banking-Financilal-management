@@ -68,3 +68,15 @@ export const transferRateLimiter = rateLimit({
     "Too many transfer requests. Please try again later.",
   ),
 });
+
+export const transactionHistoryRateLimiter = rateLimit({
+  windowMs: env.rateLimit.transactionHistory.windowMs,
+  limit: env.rateLimit.transactionHistory.max,
+  store: createRedisStore("rl:transaction-history:"),
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: createRateLimitHandler(
+    "TRANSACTION_HISTORY_RATE_LIMIT_EXCEEDED",
+    "Too many transaction history requests. Please try again later.",
+  ),
+});

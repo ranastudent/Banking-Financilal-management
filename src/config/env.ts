@@ -212,6 +212,15 @@ export const env = {
         Number(process.env.TRANSFER_RATE_LIMIT_MAX) ||
         20,
     },
+    transactionHistory: {
+      windowMs:
+        Number(process.env.TRANSACTION_HISTORY_RATE_LIMIT_WINDOW_MS) ||
+        15 * 60 * 1000,
+
+      max:
+        Number(process.env.TRANSACTION_HISTORY_RATE_LIMIT_MAX) ||
+        60,
+    },
   },
 
   // ==========================================
