@@ -296,6 +296,131 @@ describe("getTransactionHistory", () => {
         "5000.75",
       );
     });
+
+    it("should combine type, status, date, account, and amount filters", async () => {
+  await getTransactionHistory(adminUser, {
+    page: 1,
+    limit: 20,
+    type: "INTERNAL_TRANSFER",
+    status: "COMPLETED",
+    startDate: "2026-10-01",
+    endDate: "2026-10-20",
+    accountId,
+    minAmount: "100.50",
+    maxAmount: "5000.75",
+  });
+
+  expect(mockFindMany).toHaveBeenCalledTimes(1);
+
+  const findManyCall = mockFindMany.mock.calls[0]?.[0];
+
+  expect(findManyCall).toBeDefined();
+
+  expect(findManyCall.where).toEqual(
+    expect.objectContaining({
+      type: "INTERNAL_TRANSFER",
+      status: "COMPLETED",
+      createdAt: {
+        gte: new Date("2026-10-01T00:00:00.000Z"),
+        lt: new Date("2026-10-21T00:00:00.000Z"),
+      },
+      amount: expect.objectContaining({
+        gte: expect.any(Prisma.Decimal),
+        lte: expect.any(Prisma.Decimal),
+      }),
+      AND: expect.arrayContaining([
+        {
+          OR: [
+            { sourceAccountId: accountId },
+            { destinationAccountId: accountId },
+            {
+              legs: {
+                some: {
+                  accountId,
+                },
+              },
+            },
+            {
+              ledgerEntries: {
+                some: {
+                  accountId,
+                },
+              },
+            },
+          ],
+        },
+      ]),
+    }),
+  );
+
+  expect(findManyCall.where.amount.gte.toString()).toBe(
+    "100.5",
+  );
+
+  expect(findManyCall.where.amount.lte.toString()).toBe(
+    "5000.75",
+  );
+    });
+
+    it("should match an account used as source, destination, transaction leg, or ledger entry", async () => {
+  await getTransactionHistory(adminUser, {
+    page: 1,
+    limit: 20,
+    accountId,
+  });
+
+  const findManyCall = mockFindMany.mock.calls[0]?.[0];
+
+  expect(findManyCall).toBeDefined();
+
+  expect(findManyCall.where.AND).toEqual([
+    {
+      OR: [
+        { sourceAccountId: accountId },
+        { destinationAccountId: accountId },
+        {
+          legs: {
+            some: {
+              accountId,
+            },
+          },
+        },
+        {
+          ledgerEntries: {
+            some: {
+              accountId,
+            },
+          },
+        },
+      ],
+    },
+  ]);
+    });
+
+    it("should use identical filters for transaction results and total count", async () => {
+  await getTransactionHistory(adminUser, {
+    page: 1,
+    limit: 20,
+    type: "INTERNAL_TRANSFER",
+    status: "COMPLETED",
+    startDate: "2026-10-01",
+    endDate: "2026-10-20",
+    accountId,
+    minAmount: "100",
+    maxAmount: "5000",
+  });
+
+  expect(mockFindMany).toHaveBeenCalledTimes(1);
+  expect(mockCount).toHaveBeenCalledTimes(1);
+
+  const findManyCall = mockFindMany.mock.calls[0]?.[0];
+  const countCall = mockCount.mock.calls[0]?.[0];
+
+  expect(findManyCall).toBeDefined();
+  expect(countCall).toBeDefined();
+
+  expect(countCall.where).toEqual(findManyCall.where);
+    });
   });
 
   // ==========================================================
