@@ -1,28 +1,32 @@
-import { afterAll, describe, expect, it } from "vitest";
-import { redis } from "../../config/redis";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createClient } from "redis";
+import { env } from "../../config/env";
+
+/**
+ * Use a dedicated client in this test. Closing the application's shared
+ * singleton here can break unrelated Express integration tests that still
+ * use the Redis-backed rate limiters.
+ */
+const testRedis = createClient({ url: env.redisUrl });
+
+testRedis.on("error", (error) => {
+  console.error("Redis connection test client error:", error);
+});
 
 describe("Redis Connection", () => {
-  it("should connect to Redis successfully", async () => {
-    if (!redis.isOpen) {
-      await redis.connect();
-    }
+  beforeAll(async () => {
+    if (!testRedis.isOpen) await testRedis.connect();
+  });
 
-    expect(redis.isReady).toBe(true);
+  it("should connect to Redis successfully", () => {
+    expect(testRedis.isReady).toBe(true);
   });
 
   it("should respond to PING with PONG", async () => {
-    if (!redis.isOpen) {
-      await redis.connect();
-    }
-
-    const result = await redis.ping();
-
-    expect(result).toBe("PONG");
+    expect(await testRedis.ping()).toBe("PONG");
   });
 
   afterAll(async () => {
-    if (redis.isOpen) {
-      await redis.quit();
-    }
+    if (testRedis.isOpen) await testRedis.quit();
   });
 });

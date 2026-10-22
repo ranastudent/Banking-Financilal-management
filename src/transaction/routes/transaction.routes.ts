@@ -3,6 +3,7 @@ import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate";
 import { authorize } from "../../middleware/authorize";
 import { validate } from "../../middleware/validate";
+import { transferRateLimiter } from "../../middleware/rateLimiter";
 
 import {
   authorizeDeposit,
@@ -83,6 +84,7 @@ router.post(
 router.post(
   "/transfer/:sourceAccountId/:destinationAccountId",
   authenticate,
+  transferRateLimiter,
   authorize("CUSTOMER", "ADMIN"),
   transferAuthorizationController,
 );

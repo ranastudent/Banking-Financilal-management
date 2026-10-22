@@ -203,6 +203,15 @@ export const env = {
         Number(process.env.OTP_RATE_LIMIT_MAX) ||
         5,
     },
+    transfer: {
+      windowMs:
+        Number(process.env.TRANSFER_RATE_LIMIT_WINDOW_MS) ||
+        15 * 60 * 1000,
+
+      max:
+        Number(process.env.TRANSFER_RATE_LIMIT_MAX) ||
+        20,
+    },
   },
 
   // ==========================================

@@ -1,7 +1,7 @@
 import app from "./app";
 import { env } from "./config/env";
 import { prisma } from "./config/prisma";
-import { redis } from "./config/redis";
+import { ensureRedisConnected, redis } from "./config/redis";
 import { shutdown } from "./utils/shutdown";
 
 async function startServer() {
@@ -15,7 +15,7 @@ async function startServer() {
     // --------------------------------
     // Redis connection
     // --------------------------------
-    await redis.connect();
+    await ensureRedisConnected();
     console.log("Redis connected successfully");
 
     // --------------------------------

@@ -15,7 +15,7 @@ import { verifyEmailSchema } from "../schemas/verifyEmail.schema";
 import { refreshTokenSchema } from "../schemas/refresh-token.schema";
 
 import { validate } from "../../middleware/validate";
-import { authRateLimiter } from "../../middleware/rateLimiter";
+import { authRateLimiter, otpRateLimiter } from "../../middleware/rateLimiter";
 import { authenticate } from "../../middleware/authenticate";
 import { getMe } from "../controllers/me.controller";
 
@@ -24,6 +24,7 @@ const router = Router();
 router.post(
   "/register",
   authRateLimiter,
+  otpRateLimiter,
   validate({ body: registerSchema }),
   register,
 );
@@ -37,7 +38,7 @@ router.post(
 
 router.post(
   "/verify-email",
-  authRateLimiter,
+  otpRateLimiter,
   validate({ body: verifyEmailSchema }),
   verifyEmailController,
 );
