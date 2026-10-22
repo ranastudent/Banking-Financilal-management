@@ -87,6 +87,28 @@ describe("PATCH /api/v1/users/me - User Profile Update", () => {
     };
   };
 
+  it("invalidates the cached profile after a successful update", async () => {
+    const { accessToken } = await createAuthenticatedUser();
+
+    const firstRead = await request(app)
+      .get("/api/v1/users/me")
+      .set("Authorization", `Bearer ${accessToken}`);
+    expect(firstRead.status).toBe(200);
+    expect(firstRead.body.data.name).toBe("Profile Update User");
+
+    const update = await request(app)
+      .patch("/api/v1/users/me")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ name: "Cache Invalidated Name" });
+    expect(update.status).toBe(200);
+
+    const secondRead = await request(app)
+      .get("/api/v1/users/me")
+      .set("Authorization", `Bearer ${accessToken}`);
+    expect(secondRead.status).toBe(200);
+    expect(secondRead.body.data.name).toBe("Cache Invalidated Name");
+  });
+
   it("should update the user's name", async () => {
     const { user, accessToken } =
       await createAuthenticatedUser();

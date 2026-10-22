@@ -1,4 +1,5 @@
 import { prisma } from "../../config/prisma";
+import { cacheGroups, cacheService } from "../../services/cache.service";
 import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
 import type { RegisterInput } from "../schemas/auth.schema";
@@ -47,6 +48,9 @@ export const registerUser = async (input: RegisterInput) => {
       createdAt: true,
     },
   });
+
+  // Registration changes the total and ordering of the admin user list.
+  await cacheService.invalidateGroup(cacheGroups.adminUsers);
 
   await sendRegistrationOtp(user.id, user.email);
 

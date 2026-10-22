@@ -1,31 +1,7 @@
 import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
 import { prisma } from "../../config/prisma";
-import { deleteCache, getCache, setCache } from "../../services/cache.service";
-
-const PROFILE_CACHE_TTL_SECONDS = 60;
-const profileCacheKey = (userId: string) => `cache:user-profile:${userId}`;
-
-type SafeUserProfile = {
-  id: string;
-  name: string;
-  email: string;
-  phone: string | null;
-  role: string;
-  status: string;
-  emailVerifiedAt: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
-};
-
-type CachedSafeUser = Omit<
-  SafeUserProfile,
-  "emailVerifiedAt" | "createdAt" | "updatedAt"
-> & {
-  emailVerifiedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
+import { cacheGroups, cacheKeys, cacheService } from "../../services/cache.service";
 
 const SAFE_USER_SELECT = {
   id: true,
@@ -39,43 +15,16 @@ const SAFE_USER_SELECT = {
   updatedAt: true,
 } as const;
 
-export const getCurrentUser = async (userId: string): Promise<SafeUserProfile | null> => {
-  const cached = await getCache<CachedSafeUser>(profileCacheKey(userId));
-
-  if (cached) {
-    return {
-      ...cached,
-      emailVerifiedAt: cached.emailVerifiedAt
-        ? new Date(cached.emailVerifiedAt)
-        : null,
-      createdAt: new Date(cached.createdAt),
-      updatedAt: new Date(cached.updatedAt),
-    };
-  }
-
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: SAFE_USER_SELECT,
-  });
-
-  if (user) {
-    const cacheValue: CachedSafeUser = {
-      ...user,
-      emailVerifiedAt: user.emailVerifiedAt?.toISOString() ?? null,
-      createdAt: user.createdAt.toISOString(),
-      updatedAt: user.updatedAt.toISOString(),
-      role: String(user.role),
-      status: String(user.status),
-    };
-
-    await setCache(
-      profileCacheKey(userId),
-      cacheValue,
-      PROFILE_CACHE_TTL_SECONDS,
-    );
-  }
-
-  return user;
+export const getCurrentUser = async (userId: string) => {
+  return cacheService.getOrSet(
+    cacheKeys.userProfile(userId),
+    () => prisma.user.findUnique({
+      where: { id: userId },
+      select: SAFE_USER_SELECT,
+    }),
+    30,
+    [cacheGroups.user(userId)],
+  );
 };
 
 export const updateCurrentUser = async (
@@ -126,7 +75,12 @@ export const updateCurrentUser = async (
       select: SAFE_USER_SELECT,
     });
 
-    await deleteCache(profileCacheKey(userId));
+    // Invalidate only after PostgreSQL has committed the profile update.
+    await Promise.all([
+      cacheService.invalidateGroup(cacheGroups.user(userId)),
+      cacheService.invalidateGroup(cacheGroups.adminUser(userId)),
+      cacheService.invalidateGroup(cacheGroups.adminUsers),
+    ]);
 
     return updatedUser;
   } catch (error) {

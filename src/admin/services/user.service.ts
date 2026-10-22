@@ -1,4 +1,5 @@
 import { prisma } from "../../config/prisma";
+import { cacheGroups, cacheKeys, cacheService } from "../../services/cache.service";
 import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
 import { revokeAllRefreshTokensForUser } from "../../auth/services/token-revocation.service";
@@ -20,36 +21,46 @@ export const getAdminUsers = async (
 ) => {
   const skip = (page - 1) * limit;
 
-  const [users, total] = await prisma.$transaction([
-    prisma.user.findMany({
-      skip,
-      take: limit,
-      orderBy: {
-        createdAt: "desc",
-      },
-      select: SAFE_USER_SELECT,
-    }),
-    prisma.user.count(),
-  ]);
+  return cacheService.getOrSet(
+    cacheKeys.adminUserList(page, limit),
+    async () => {
+      const [users, total] = await prisma.$transaction([
+        prisma.user.findMany({
+          skip,
+          take: limit,
+          orderBy: {
+            createdAt: "desc",
+          },
+          select: SAFE_USER_SELECT,
+        }),
+        prisma.user.count(),
+      ]);
 
-  return {
-    users,
-    pagination: {
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit),
+      return {
+        users,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+        },
+      };
     },
-  };
+    15,
+    [cacheGroups.adminUsers],
+  );
 };
 
 export const getAdminUserById = async (userId: string) => {
-  const user = await prisma.user.findUnique({
-    where: {
-      id: userId,
-    },
-    select: SAFE_USER_SELECT,
-  });
+  const user = await cacheService.getOrSet(
+    cacheKeys.adminUser(userId),
+    () => prisma.user.findUnique({
+      where: { id: userId },
+      select: SAFE_USER_SELECT,
+    }),
+    15,
+    [cacheGroups.adminUser(userId), cacheGroups.adminUsers],
+  );
 
   if (!user) {
     throw new AppError(
@@ -126,6 +137,13 @@ export const updateAdminUserStatus = async (
 
     return updated;
   });
+
+  // Invalidate read caches after the PostgreSQL transaction commits.
+  await Promise.all([
+    cacheService.invalidateGroup(cacheGroups.user(userId)),
+    cacheService.invalidateGroup(cacheGroups.adminUser(userId)),
+    cacheService.invalidateGroup(cacheGroups.adminUsers),
+  ]);
 
   // Revoke refresh tokens after BLOCKED/SUSPENDED
   if (status === "BLOCKED" || status === "SUSPENDED") {
