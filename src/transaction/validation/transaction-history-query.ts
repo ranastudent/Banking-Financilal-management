@@ -1,17 +1,10 @@
+import { TransactionStatus, TransactionType } from "@prisma/client";
 import { z } from "zod";
-import {
-  TransactionStatus,
-  TransactionType,
-} from "@prisma/client";
-
-// ============================================================
-// CONSTANTS
-// ============================================================
+import { AppError } from "../../errors/AppError";
+import { ErrorCode } from "../../errors/errorCodes";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
 const DECIMAL_PATTERN = /^\d+(\.\d{1,8})?$/;
-
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -19,31 +12,15 @@ const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 const MAX_PAGE = 2_147_483_647;
+const MAX_CURSOR_LENGTH = 512;
+const CURSOR_PATTERN = /^[A-Za-z0-9_-]+$/;
 const MAX_INTEGER_DIGITS = 16;
 const MAX_DECIMAL_PLACES = 8;
 
-// ============================================================
-// DATE VALIDATION
-// ============================================================
-
-/**
- * Validates an optional date in YYYY-MM-DD format.
- *
- * Checks both the format and whether the date is a valid
- * calendar date.
- *
- * Examples:
- *   2026-10-21 -> valid
- *   2026-02-30 -> invalid
- *   21-10-2026 -> invalid
- */
 const optionalDateSchema = z
   .string()
   .trim()
-  .regex(
-    DATE_PATTERN,
-    "Date must use YYYY-MM-DD format",
-  )
+  .regex(DATE_PATTERN, "Date must use YYYY-MM-DD format")
   .refine(
     (value) => {
       const date = new Date(`${value}T00:00:00.000Z`);
@@ -53,32 +30,10 @@ const optionalDateSchema = z
         date.toISOString().slice(0, 10) === value
       );
     },
-    {
-      message: "Date must be a valid calendar date",
-    },
+    { message: "Date must be a valid calendar date" },
   )
   .optional();
 
-// ============================================================
-// AMOUNT VALIDATION
-// ============================================================
-
-/**
- * Validates a non-negative monetary amount.
- *
- * Matches the precision of Prisma Decimal(24, 8):
- *   - Maximum 16 integer digits
- *   - Maximum 8 fractional digits
- *
- * Amounts remain strings to avoid floating-point precision loss.
- *
- * Examples:
- *   100       -> valid
- *   100.25    -> valid
- *   0.12345678 -> valid
- *   -100      -> invalid
- *   10.123456789 -> invalid
- */
 const optionalAmountSchema = z
   .string()
   .trim()
@@ -89,94 +44,46 @@ const optionalAmountSchema = z
   .refine(
     (value) => {
       const [integerPart = ""] = value.split(".");
-
       return integerPart.length <= MAX_INTEGER_DIGITS;
     },
-    {
-      message: "Amount exceeds the supported precision",
-    },
+    { message: "Amount exceeds the supported precision" },
   )
   .optional();
 
-// ============================================================
-// DECIMAL COMPARISON HELPERS
-// ============================================================
-
-/**
- * Normalizes a decimal string without using floating-point math.
- *
- * Examples:
- *   "00100.5000" -> "100.5"
- *   "00025.000"  -> "25"
- *   "0.5000"     -> "0.5"
- */
 const normalizeDecimal = (value: string): string => {
-  const [integerPart = "0", fractionalPart = ""] =
-    value.split(".");
-
-  const normalizedInteger = integerPart.replace(
-    /^0+(?=\d)/,
-    "",
-  );
-
+  const [integerPart = "0", fractionalPart = ""] = value.split(".");
+  const normalizedInteger = integerPart.replace(/^0+(?=\d)/, "");
   const normalizedFraction = fractionalPart.replace(/0+$/, "");
 
-  if (normalizedFraction.length === 0) {
-    return normalizedInteger;
-  }
-
-  return `${normalizedInteger}.${normalizedFraction}`;
+  return normalizedFraction.length === 0
+    ? normalizedInteger
+    : `${normalizedInteger}.${normalizedFraction}`;
 };
 
-/**
- * Compares two non-negative decimal strings precisely.
- *
- * Returns:
- *   -1 if first < second
- *    0 if first = second
- *    1 if first > second
- *
- * This avoids Number conversion, which can introduce
- * precision errors for large monetary amounts.
- */
-const compareDecimals = (
-  first: string,
-  second: string,
-): number => {
+const compareDecimals = (first: string, second: string): number => {
   const normalizedFirst = normalizeDecimal(first);
   const normalizedSecond = normalizeDecimal(second);
 
   const [firstInteger = "0", firstFraction = ""] =
     normalizedFirst.split(".");
-
   const [secondInteger = "0", secondFraction = ""] =
     normalizedSecond.split(".");
 
-  // Step 1: Compare integer-part lengths.
   if (firstInteger.length !== secondInteger.length) {
     return firstInteger.length > secondInteger.length ? 1 : -1;
   }
 
-  // Step 2: Compare integer parts.
   if (firstInteger !== secondInteger) {
     return firstInteger > secondInteger ? 1 : -1;
   }
 
-  // Step 3: Compare fractional parts.
   const fractionLength = Math.max(
     firstFraction.length,
     secondFraction.length,
   );
 
-  const paddedFirstFraction = firstFraction.padEnd(
-    fractionLength,
-    "0",
-  );
-
-  const paddedSecondFraction = secondFraction.padEnd(
-    fractionLength,
-    "0",
-  );
+  const paddedFirstFraction = firstFraction.padEnd(fractionLength, "0");
+  const paddedSecondFraction = secondFraction.padEnd(fractionLength, "0");
 
   if (paddedFirstFraction === paddedSecondFraction) {
     return 0;
@@ -185,42 +92,40 @@ const compareDecimals = (
   return paddedFirstFraction > paddedSecondFraction ? 1 : -1;
 };
 
-// ============================================================
-// TRANSACTION HISTORY QUERY SCHEMA
-// ============================================================
+export type TransactionPaginationMode = "offset" | "cursor";
 
-/**
- * Validates query parameters for:
- *
- * GET /api/v1/transactions
- *
- * Supported query parameters:
- *
- * page       -> Positive integer; default 1
- * limit      -> Integer between 1 and 100; default 20
- * type       -> Valid TransactionType
- * status     -> Valid TransactionStatus
- * startDate  -> Valid YYYY-MM-DD date
- * endDate    -> Valid YYYY-MM-DD date
- * accountId  -> Valid UUID
- * minAmount  -> Non-negative decimal
- * maxAmount  -> Non-negative decimal
- *
- * Unknown query parameters are rejected.
- */
-export const transactionHistoryQuerySchema = z
+export const getTransactionPaginationMode = (
+  rawQuery: unknown,
+): TransactionPaginationMode => {
+  if (
+    typeof rawQuery !== "object" ||
+    rawQuery === null ||
+    Array.isArray(rawQuery)
+  ) {
+    return "cursor";
+  }
+
+  const query = rawQuery as Record<string, unknown>;
+  const hasExplicitPage = query.page !== undefined;
+  const hasCursor = query.cursor !== undefined;
+
+  if (hasExplicitPage && hasCursor) {
+    throw new AppError(
+      "Cursor pagination cannot be combined with page pagination",
+      400,
+      ErrorCode.BAD_REQUEST,
+    );
+  }
+
+  return hasExplicitPage ? "offset" : "cursor";
+};
+
+const transactionHistoryQueryObjectSchema = z
   .object({
-    // --------------------------------------------------------
-    // Pagination
-    // --------------------------------------------------------
-
     page: z
       .string()
       .trim()
-      .regex(
-        /^[1-9]\d*$/,
-        "Page must be a positive integer",
-      )
+      .regex(/^[1-9]\d*$/, "Page must be a positive integer")
       .transform(Number)
       .pipe(
         z
@@ -228,10 +133,7 @@ export const transactionHistoryQuerySchema = z
           .int()
           .safe()
           .positive()
-          .max(
-            MAX_PAGE,
-            "Page exceeds the supported maximum",
-          ),
+          .max(MAX_PAGE, "Page exceeds the supported maximum"),
       )
       .optional()
       .default(DEFAULT_PAGE),
@@ -239,67 +141,77 @@ export const transactionHistoryQuerySchema = z
     limit: z
       .string()
       .trim()
-      .regex(
-        /^\d+$/,
-        "Limit must be an integer",
-      )
+      .regex(/^\d+$/, "Limit must be an integer")
       .transform(Number)
       .pipe(
         z
           .number()
           .int()
           .min(1, "Limit must be at least 1")
-          .max(
-            MAX_LIMIT,
-            `Limit cannot exceed ${MAX_LIMIT}`,
-          ),
+          .max(MAX_LIMIT, `Limit cannot exceed ${MAX_LIMIT}`),
       )
       .optional()
       .default(DEFAULT_LIMIT),
 
-    // --------------------------------------------------------
-    // Transaction filters
-    // --------------------------------------------------------
+    cursor: z
+      .string()
+      .trim()
+      .min(1, "Cursor cannot be empty")
+      .max(
+        MAX_CURSOR_LENGTH,
+        `Cursor cannot exceed ${MAX_CURSOR_LENGTH} characters`,
+      )
+      .regex(CURSOR_PATTERN, "Cursor must be a valid Base64URL token")
+      .optional(),
 
     type: z.nativeEnum(TransactionType).optional(),
-
     status: z.nativeEnum(TransactionStatus).optional(),
-
-    // --------------------------------------------------------
-    // Date filters
-    // --------------------------------------------------------
-
     startDate: optionalDateSchema,
-
     endDate: optionalDateSchema,
-
-    // --------------------------------------------------------
-    // Account filter
-    // --------------------------------------------------------
 
     accountId: z
       .string()
       .trim()
-      .regex(
-        UUID_PATTERN,
-        "Account ID must be a valid UUID",
-      )
+      .regex(UUID_PATTERN, "Account ID must be a valid UUID")
       .optional(),
 
-    // --------------------------------------------------------
-    // Amount filters
-    // --------------------------------------------------------
-
     minAmount: optionalAmountSchema,
-
     maxAmount: optionalAmountSchema,
   })
-  .strict()
-  .superRefine((query, context) => {
-    // --------------------------------------------------------
-    // Validate the date range
-    // --------------------------------------------------------
+  .strict();
 
+export const transactionHistoryQuerySchema = z
+  .preprocess(
+    (input, context) => {
+      if (
+        typeof input !== "object" ||
+        input === null ||
+        Array.isArray(input)
+      ) {
+        return input;
+      }
+
+      const rawQuery = input as Record<string, unknown>;
+
+      if (
+        rawQuery.page !== undefined &&
+        rawQuery.cursor !== undefined
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["cursor"],
+          message:
+            "Cursor pagination cannot be combined with page pagination",
+        });
+
+        return z.NEVER;
+      }
+
+      return rawQuery;
+    },
+    transactionHistoryQueryObjectSchema,
+  )
+  .superRefine((query, context) => {
     if (
       query.startDate !== undefined &&
       query.endDate !== undefined &&
@@ -308,14 +220,9 @@ export const transactionHistoryQuerySchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["endDate"],
-        message:
-          "End date cannot be earlier than start date",
+        message: "End date cannot be earlier than start date",
       });
     }
-
-    // --------------------------------------------------------
-    // Validate the amount range
-    // --------------------------------------------------------
 
     if (
       query.minAmount !== undefined &&
@@ -325,22 +232,11 @@ export const transactionHistoryQuerySchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["maxAmount"],
-        message:
-          "Maximum amount cannot be less than minimum amount",
+        message: "Maximum amount cannot be less than minimum amount",
       });
     }
   });
 
-// ============================================================
-// EXPORTED TYPES
-// ============================================================
-
-/**
- * TypeScript type inferred from the validated query schema.
- *
- * page and limit are numbers after validation.
- * Monetary amounts remain strings for decimal precision.
- */
 export type TransactionHistoryQuery = z.infer<
   typeof transactionHistoryQuerySchema
 >;
