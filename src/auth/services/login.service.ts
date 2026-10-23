@@ -9,12 +9,17 @@ import {
   generateRefreshToken,
 } from "../utils/jwt";
 import { hashRefreshToken } from "../utils/refreshTokenHash";
+import { writeAuditLog, writeSecurityAuditLogSafely } from "../../audit/audit.service";
+import type { AuditContext } from "../../audit/audit.types";
 
 const INVALID_CREDENTIALS_MESSAGE = "Invalid email or password";
 
 const REFRESH_TOKEN_EXPIRES_IN_DAYS = 7;
 
-export const loginUser = async (input: LoginInput) => {
+export const loginUser = async (
+  input: LoginInput,
+  auditContext: AuditContext = {},
+) => {
   const email = input.email.trim().toLowerCase();
 
   const user = await prisma.user.findUnique({
@@ -32,6 +37,16 @@ export const loginUser = async (input: LoginInput) => {
   });
 
   if (!user) {
+    await writeSecurityAuditLogSafely({
+      action: "LOGIN_FAILED",
+      resource: "USER",
+      userId: null,
+      success: false,
+      failureReason: "Invalid credentials",
+      ...auditContext,
+      metadata: { attemptedEmail: email },
+    });
+
     throw new AppError(
       INVALID_CREDENTIALS_MESSAGE,
       401,
@@ -40,6 +55,17 @@ export const loginUser = async (input: LoginInput) => {
   }
 
   if (!user.emailVerifiedAt) {
+    await writeSecurityAuditLogSafely({
+      action: "LOGIN_FAILED",
+      resource: "USER",
+      resourceId: user.id,
+      userId: user.id,
+      success: false,
+      failureReason: "Email not verified",
+      ...auditContext,
+      metadata: { reason: "EMAIL_NOT_VERIFIED" },
+    });
+
     throw new AppError(
       "Please verify your email before logging in",
       401,
@@ -48,6 +74,17 @@ export const loginUser = async (input: LoginInput) => {
   }
 
   if (user.status !== "ACTIVE") {
+    await writeSecurityAuditLogSafely({
+      action: "LOGIN_FAILED",
+      resource: "USER",
+      resourceId: user.id,
+      userId: user.id,
+      success: false,
+      failureReason: "Account is not active",
+      ...auditContext,
+      metadata: { accountStatus: user.status },
+    });
+
     throw new AppError(
       "Your account is not active",
       403,
@@ -61,6 +98,17 @@ export const loginUser = async (input: LoginInput) => {
   );
 
   if (!passwordMatches) {
+    await writeSecurityAuditLogSafely({
+      action: "LOGIN_FAILED",
+      resource: "USER",
+      resourceId: user.id,
+      userId: user.id,
+      success: false,
+      failureReason: "Invalid credentials",
+      ...auditContext,
+      metadata: { reason: "INVALID_CREDENTIALS" },
+    });
+
     throw new AppError(
       INVALID_CREDENTIALS_MESSAGE,
       401,
@@ -85,12 +133,28 @@ export const loginUser = async (input: LoginInput) => {
       REFRESH_TOKEN_EXPIRES_IN_DAYS * 24 * 60 * 60 * 1000,
   );
 
-  await prisma.refreshToken.create({
-    data: {
-      userId: user.id,
-      tokenHash: refreshTokenHash,
-      expiresAt,
-    },
+  await prisma.$transaction(async (tx) => {
+    await tx.refreshToken.create({
+      data: {
+        userId: user.id,
+        tokenHash: refreshTokenHash,
+        expiresAt,
+      },
+    });
+
+    await writeAuditLog(
+      {
+        userId: user.id,
+        action: "LOGIN",
+        resource: "USER",
+        resourceId: user.id,
+        description: "User logged in successfully.",
+        success: true,
+        ...auditContext,
+        metadata: { role: user.role },
+      },
+      tx,
+    );
   });
 
   // Security alerts are an asynchronous side effect. Do not turn a successful

@@ -7,6 +7,8 @@ import type { AuthUser } from "../../types/auth";
 import type { CreateAccountInput } from "../schemas/account.schema";
 import { getCustomerOwnedAccount } from "../policies/account.policy";
 import { Prisma } from "@prisma/client";
+import { writeAuditLog } from "../../audit/audit.service";
+import type { AuditContext } from "../../audit/audit.types";
 
 
 const MAX_ACCOUNT_NUMBER_ATTEMPTS = 5;
@@ -28,6 +30,7 @@ const createAccountRecord = async (
   tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
   userId: string,
   input: CreateAccountInput,
+  auditContext: AuditContext = {},
 ) => {
   const user = await tx.user.findUnique({
     where: {
@@ -139,19 +142,21 @@ const createAccountRecord = async (
         },
       });
 
-      await tx.auditLog.create({
-        data: {
+      await writeAuditLog(
+        {
           userId,
           action: "ACCOUNT_CREATED",
-          entityType: "ACCOUNT",
-          entityId: account.id,
-          description: `Account ${account.accountNumber} was created.`,
+          resource: "ACCOUNT",
+          resourceId: account.id,
+          description: "Bank account created.",
+          ...auditContext,
           metadata: {
             accountType: account.accountType,
             currency: currency.code,
           },
         },
-      });
+        tx,
+      );
 
       return account;
     } catch (error) {
@@ -177,9 +182,10 @@ const createAccountRecord = async (
 export const createCustomerAccount = async (
   user: AuthUser,
   input: CreateAccountInput,
+  auditContext: AuditContext = {},
 ) => {
   return prisma.$transaction((tx) =>
-    createAccountRecord(tx, user.id, input),
+    createAccountRecord(tx, user.id, input, auditContext),
   );
 };
 
@@ -340,6 +346,7 @@ export const updateCustomerAccountStatus = async (
   status: "ACTIVE" | "FROZEN" | "CLOSED",
   ipAddress?: string,
   userAgent?: string,
+  requestId?: string,
 ) => {
   /*
    * This initial ownership check remains outside the transaction
@@ -483,23 +490,24 @@ export const updateCustomerAccountStatus = async (
        * 4. AUDIT LOG
        * ======================================================
        */
-      await tx.auditLog.create({
-        data: {
+      await writeAuditLog(
+        {
           userId,
-          action: "ACCOUNT_STATUS_CHANGED",
-          entityType: "ACCOUNT",
-          entityId: accountId,
+          action: status === "FROZEN" ? "ACCOUNT_BLOCKED" : "ACCOUNT_STATUS_CHANGED",
+          resource: "ACCOUNT",
+          resourceId: accountId,
           description:
-            `Account ${lockedAccount.accountNumber} status changed ` +
-            `from ${lockedAccount.status} to ${status}.`,
-          ipAddress: ipAddress ?? null,
-          userAgent: userAgent ?? null,
+            `Account status changed from ${lockedAccount.status} to ${status}.`,
+          ipAddress,
+          userAgent,
+          requestId,
           metadata: {
             previousStatus: lockedAccount.status,
             newStatus: status,
           },
         },
-      });
+        tx,
+      );
 
       return updated;
     },

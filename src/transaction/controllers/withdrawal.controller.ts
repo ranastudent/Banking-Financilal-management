@@ -40,6 +40,13 @@ export const processWithdrawal = async (
       req.user,
       accountId,
       req.body,
+      {
+        auditContext: {
+          requestId: req.requestId,
+          ipAddress: req.ip,
+          userAgent: req.get("user-agent") ?? undefined,
+        },
+      },
     );
   } catch (error) {
     /*

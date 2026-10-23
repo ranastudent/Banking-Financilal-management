@@ -118,6 +118,7 @@ export const updateUserStatus = async (
     req.user.id,
     req.ip,
     req.get("user-agent") ?? undefined,
+    req.requestId,
   );
 
   res.status(200).json({

@@ -124,6 +124,11 @@ export const processTransfer = async (
       req.user,
       req.body,
       idempotencyRecordId,
+      {
+        requestId: req.requestId,
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent") ?? undefined,
+      },
     );
   } catch (error) {
     /*

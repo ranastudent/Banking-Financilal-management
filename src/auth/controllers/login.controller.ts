@@ -12,7 +12,11 @@ export const login = async (
   try {
     const input = req.body as LoginInput;
 
-    const result = await loginUser(input);
+    const result = await loginUser(input, {
+      requestId: req.requestId,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent") ?? undefined,
+    });
 
     sendSuccess(
       res,

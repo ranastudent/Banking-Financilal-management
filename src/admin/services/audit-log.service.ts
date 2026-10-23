@@ -11,7 +11,10 @@ const SAFE_AUDIT_LOG_SELECT = {
   description: true,
   ipAddress: true,
   userAgent: true,
+  requestId: true,
   metadata: true,
+  success: true,
+  failureReason: true,
   createdAt: true,
   user: {
     select: {

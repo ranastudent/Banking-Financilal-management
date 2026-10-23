@@ -33,7 +33,11 @@ export const createBeneficiary = async (
 ): Promise<void> => {
   const user = requireAuthenticatedUser(req);
   const input = req.body as CreateBeneficiaryInput;
-  const beneficiary = await createBeneficiaryService(user, input);
+  const beneficiary = await createBeneficiaryService(user, input, {
+    requestId: req.requestId,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? undefined,
+  });
 
   res.status(201).json({
     success: true,
@@ -68,6 +72,11 @@ export const updateBeneficiary = async (
     user.id,
     params.beneficiaryId,
     input,
+    {
+      requestId: req.requestId,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent") ?? undefined,
+    },
   );
 
   res.status(200).json({
@@ -84,7 +93,11 @@ export const deleteBeneficiary = async (
   const user = requireAuthenticatedUser(req);
   const params = req.validatedParams as BeneficiaryIdParams;
 
-  await deleteBeneficiaryService(user.id, params.beneficiaryId);
+  await deleteBeneficiaryService(user.id, params.beneficiaryId, {
+    requestId: req.requestId,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? undefined,
+  });
 
   res.status(200).json({
     success: true,

@@ -12,7 +12,11 @@ export const logout = async (
   try {
     const input = req.body as RefreshTokenInput;
 
-    await logoutUser(input);
+    await logoutUser(input, {
+      requestId: req.requestId,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent") ?? undefined,
+    });
 
     sendSuccess(
       res,

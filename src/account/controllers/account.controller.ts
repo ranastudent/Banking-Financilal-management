@@ -19,6 +19,11 @@ export const createAccount = async (
   const account = await createCustomerAccount(
     req.user,
     req.body,
+    {
+      requestId: req.requestId,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent") ?? undefined,
+    },
   );
 
   res.status(201).json({
@@ -128,6 +133,7 @@ export const updateAccountStatus = async (
       status,
       req.ip,
       req.get("user-agent") ?? undefined,
+      req.requestId,
     );
 
   res.status(200).json({

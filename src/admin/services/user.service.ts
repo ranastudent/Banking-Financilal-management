@@ -1,4 +1,5 @@
 import { prisma } from "../../config/prisma";
+import { writeAuditLog } from "../../audit/audit.service";
 import { cacheGroups, cacheKeys, cacheService } from "../../services/cache.service";
 import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
@@ -79,6 +80,7 @@ export const updateAdminUserStatus = async (
   adminUserId: string,
   ipAddress?: string,
   userAgent?: string,
+  requestId?: string,
 ) => {
   const updatedUser = await prisma.$transaction(async (tx) => {
     const user = await tx.user.findUnique({
@@ -119,21 +121,23 @@ export const updateAdminUserStatus = async (
       select: SAFE_USER_SELECT,
     });
 
-    await tx.auditLog.create({
-      data: {
+    await writeAuditLog(
+      {
         userId: adminUserId,
-        action: "USER_STATUS_CHANGED",
-        entityType: "USER",
-        entityId: user.id,
-        description: `User ${user.id} status changed from ${user.status} to ${status}.`,
-        ipAddress: ipAddress ?? null,
-        userAgent: userAgent ?? null,
+        action: status === "BLOCKED" ? "ACCOUNT_BLOCKED" : "USER_STATUS_CHANGED",
+        resource: "USER",
+        resourceId: user.id,
+        description: `User status changed from ${user.status} to ${status}.`,
+        ipAddress,
+        userAgent,
+        requestId,
         metadata: {
           previousStatus: user.status,
           newStatus: status,
         },
       },
-    });
+      tx,
+    );
 
     if (status === "BLOCKED" && user.status !== "BLOCKED") {
       await tx.outboxEvent.create({

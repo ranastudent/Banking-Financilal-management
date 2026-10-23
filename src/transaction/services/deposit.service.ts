@@ -6,6 +6,8 @@ import { ErrorCode } from "../../errors/errorCodes";
 import type { DepositInput } from "../../account/schemas/deposit.schema";
 import type { AuthUser } from "../../types/auth";
 import { randomUUID } from "crypto";
+import { writeAuditLog } from "../../audit/audit.service";
+import type { AuditContext } from "../../audit/audit.types";
 
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -18,6 +20,7 @@ type DepositFailurePoint =
 
 type DepositServiceOptions = {
   failurePoint?: DepositFailurePoint;
+  auditContext?: AuditContext;
 };
 
 const simulateDepositFailure = (
@@ -202,15 +205,16 @@ const createDepositAuditLog = async (
   transactionReference: string,
   amount: Prisma.Decimal,
   currencyCode: string,
+  auditContext: AuditContext = {},
 ) => {
-  return tx.auditLog.create({
-    data: {
+  return writeAuditLog(
+    {
       userId,
       action: "DEPOSIT_CREATED",
-      entityType: "TRANSACTION",
-      entityId: transactionId,
+      resource: "TRANSACTION",
+      resourceId: transactionId,
       description: `Deposit transaction ${transactionReference} created for account ${accountNumber}`,
-
+      ...auditContext,
       metadata: {
         operation: "ACCOUNT_DEPOSIT",
         transactionId,
@@ -222,17 +226,8 @@ const createDepositAuditLog = async (
         userRole,
       },
     },
-    select: {
-      id: true,
-      userId: true,
-      action: true,
-      entityType: true,
-      entityId: true,
-      description: true,
-      metadata: true,
-      createdAt: true,
-    },
-  });
+    tx,
+  );
 };
 
 export const prepareDeposit = async (
@@ -369,6 +364,7 @@ export const prepareDeposit = async (
       transaction.reference,
       amount,
       currency.code,
+      options.auditContext,
     );
 
     simulateDepositFailure(

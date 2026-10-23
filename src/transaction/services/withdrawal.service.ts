@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "../../config/prisma";
+import { writeAuditLog } from "../../audit/audit.service";
+import type { AuditContext } from "../../audit/audit.types";
 import { env } from "../../config/env";
 import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
@@ -20,6 +22,7 @@ type WithdrawalFailurePoint =
 
 type WithdrawalServiceOptions = {
   failurePoint?: WithdrawalFailurePoint;
+  auditContext?: AuditContext;
 };
 
 const simulateWithdrawalFailure = (
@@ -376,16 +379,16 @@ const createWithdrawalAuditLog = async (
   transactionReference: string,
   amount: Prisma.Decimal,
   currencyCode: string,
+  auditContext: AuditContext = {},
 ) => {
-  return tx.auditLog.create({
-    data: {
+  return writeAuditLog(
+    {
       userId,
       action: "WITHDRAWAL_CREATED",
-      entityType: "TRANSACTION",
-      entityId: transactionId,
-
+      resource: "TRANSACTION",
+      resourceId: transactionId,
       description: `Withdrawal transaction ${transactionReference} created for account ${accountNumber}`,
-
+      ...auditContext,
       metadata: {
         operation: "ACCOUNT_WITHDRAWAL",
         transactionId,
@@ -397,18 +400,8 @@ const createWithdrawalAuditLog = async (
         userRole,
       },
     },
-
-    select: {
-      id: true,
-      userId: true,
-      action: true,
-      entityType: true,
-      entityId: true,
-      description: true,
-      metadata: true,
-      createdAt: true,
-    },
-  });
+    tx,
+  );
 };
 
 export const prepareWithdrawal = async (
@@ -579,6 +572,7 @@ export const prepareWithdrawal = async (
       transaction.reference,
       amount,
       currency.code,
+      options.auditContext,
     );
 
     simulateWithdrawalFailure(

@@ -1,4 +1,6 @@
 import { prisma } from "../../config/prisma";
+import { writeAuditLog } from "../../audit/audit.service";
+import type { AuditContext } from "../../audit/audit.types";
 import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
 import type { AuthUser } from "../../types/auth";
@@ -47,19 +49,41 @@ const assertActiveCurrency = async (
 export const createBeneficiary = async (
   user: AuthUser,
   input: CreateBeneficiaryInput,
+  auditContext: AuditContext = {},
 ) => {
   await assertActiveCurrency(input.currencyCode);
 
-  return prisma.beneficiary.create({
-    data: {
-      userId: user.id,
-      beneficiaryType: input.beneficiaryType,
-      displayName: input.displayName,
-      accountReference: input.accountReference,
-      provider: input.provider ?? null,
-      currencyCode: input.currencyCode,
-    },
-    select: SAFE_BENEFICIARY_SELECT,
+  return prisma.$transaction(async (tx) => {
+    const beneficiary = await tx.beneficiary.create({
+      data: {
+        userId: user.id,
+        beneficiaryType: input.beneficiaryType,
+        displayName: input.displayName,
+        accountReference: input.accountReference,
+        provider: input.provider ?? null,
+        currencyCode: input.currencyCode,
+      },
+      select: SAFE_BENEFICIARY_SELECT,
+    });
+
+    await writeAuditLog(
+      {
+        userId: user.id,
+        action: "BENEFICIARY_ADDED",
+        resource: "BENEFICIARY",
+        resourceId: beneficiary.id,
+        description: "Beneficiary added.",
+        ...auditContext,
+        metadata: {
+          beneficiaryType: beneficiary.beneficiaryType,
+          currencyCode: beneficiary.currencyCode,
+          provider: beneficiary.provider,
+        },
+      },
+      tx,
+    );
+
+    return beneficiary;
   });
 };
 
@@ -101,6 +125,7 @@ export const updateBeneficiary = async (
   userId: string,
   beneficiaryId: string,
   input: UpdateBeneficiaryInput,
+  auditContext: AuditContext = {},
 ) => {
   if (input.currencyCode !== undefined) {
     await assertActiveCurrency(input.currencyCode);
@@ -121,59 +146,94 @@ export const updateBeneficiary = async (
     }),
   };
 
-  const result = await prisma.beneficiary.updateMany({
-    where: {
-      id: beneficiaryId,
-      userId,
-    },
-    data,
-  });
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.beneficiary.findFirst({
+      where: {
+        id: beneficiaryId,
+        userId,
+      },
+      select: {
+        id: true,
+      },
+    });
 
-  if (result.count !== 1) {
-    throw new AppError(
-      "Beneficiary not found",
-      404,
-      ErrorCode.RESOURCE_NOT_FOUND,
+    if (!existing) {
+      throw new AppError(
+        "Beneficiary not found",
+        404,
+        ErrorCode.RESOURCE_NOT_FOUND,
+      );
+    }
+
+    const beneficiary = await tx.beneficiary.update({
+      where: {
+        id: beneficiaryId,
+      },
+      data,
+      select: SAFE_BENEFICIARY_SELECT,
+    });
+
+    await writeAuditLog(
+      {
+        userId,
+        action: "BENEFICIARY_UPDATED",
+        resource: "BENEFICIARY",
+        resourceId: beneficiary.id,
+        description: "Beneficiary details updated.",
+        ...auditContext,
+        metadata: {
+          changedFields: Object.keys(data),
+        },
+      },
+      tx,
     );
-  }
 
-  const beneficiary = await prisma.beneficiary.findFirst({
-    where: {
-      id: beneficiaryId,
-      userId,
-    },
-    select: SAFE_BENEFICIARY_SELECT,
+    return beneficiary;
   });
-
-  if (!beneficiary) {
-    throw new AppError(
-      "Beneficiary not found",
-      404,
-      ErrorCode.RESOURCE_NOT_FOUND,
-    );
-  }
-
-  return beneficiary;
 };
 
 export const deleteBeneficiary = async (
   userId: string,
   beneficiaryId: string,
+  auditContext: AuditContext = {},
 ): Promise<void> => {
-  const result = await prisma.beneficiary.deleteMany({
-    where: {
-      id: beneficiaryId,
-      userId,
-    },
-  });
+  await prisma.$transaction(async (tx) => {
+    const beneficiary = await tx.beneficiary.findFirst({
+      where: {
+        id: beneficiaryId,
+        userId,
+      },
+      select: {
+        id: true,
+      },
+    });
 
-  if (result.count !== 1) {
-    throw new AppError(
-      "Beneficiary not found",
-      404,
-      ErrorCode.RESOURCE_NOT_FOUND,
+    if (!beneficiary) {
+      throw new AppError(
+        "Beneficiary not found",
+        404,
+        ErrorCode.RESOURCE_NOT_FOUND,
+      );
+    }
+
+    await tx.beneficiary.delete({
+      where: {
+        id: beneficiaryId,
+      },
+    });
+
+    await writeAuditLog(
+      {
+        userId,
+        action: "BENEFICIARY_DELETED",
+        resource: "BENEFICIARY",
+        resourceId: beneficiaryId,
+        description: "Beneficiary deleted.",
+        ...auditContext,
+      },
+      tx,
     );
-  }
+  });
 };
 
 /**

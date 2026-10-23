@@ -4,6 +4,8 @@ import { performance } from "node:perf_hooks";
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "../../config/prisma";
+import { writeAuditLog } from "../../audit/audit.service";
+import type { AuditContext } from "../../audit/audit.types";
 import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
 import type { AuthUser } from "../../types/auth";
@@ -251,6 +253,7 @@ export const prepareTransfer = async (
   user: AuthUser,
   input: TransferInput,
   idempotencyRecordId?: string,
+  auditContext: AuditContext = {},
 ) => {
   const amount = new Prisma.Decimal(input.amount);
   const perfTransferId = randomUUID();
@@ -859,37 +862,27 @@ export const prepareTransfer = async (
 
         const auditStart = performance.now();
 
-        const auditLog =
-          await tx.auditLog.create({
-            data: {
-              userId: user.id,
-              action: "TRANSFER_CREATED",
-              entityType: "TRANSACTION",
-              entityId: transaction.id,
-              description:
-                `Fund transfer ${transaction.reference} created from ` +
-                `${sender.account_number} to ` +
-                `${receiver.account_number}`,
-              metadata: {
-                operation:
-                  "INTERNAL_FUND_TRANSFER",
-                senderAccount:
-                  sender.account_number,
-                receiverAccount:
-                  receiver.account_number,
-                amount: amount.toString(),
-                currencyCode: currency.code,
-                userRole: user.role,
-              },
+        await writeAuditLog(
+          {
+            userId: user.id,
+            action: "TRANSFER_CREATED",
+            resource: "TRANSACTION",
+            resourceId: transaction.id,
+            description:
+              `Fund transfer ${transaction.reference} created from ` +
+              `${sender.account_number} to ${receiver.account_number}`,
+            ...auditContext,
+            metadata: {
+              operation: "INTERNAL_FUND_TRANSFER",
+              senderAccount: sender.account_number,
+              receiverAccount: receiver.account_number,
+              amount: amount.toString(),
+              currencyCode: currency.code,
+              userRole: user.role,
             },
-            select: {
-              id: true,
-              action: true,
-              entityType: true,
-              entityId: true,
-              createdAt: true,
-            },
-          });
+          },
+          tx,
+        );
 
         perfLog("audit log created", {
           perfTransferId,
@@ -960,8 +953,6 @@ export const prepareTransfer = async (
                 receiverLedgerEntry.balanceAfter.toString(),
             },
           ],
-
-          auditLog,
         };
 
         /*
