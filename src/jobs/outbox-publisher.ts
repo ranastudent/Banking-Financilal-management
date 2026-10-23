@@ -1,7 +1,11 @@
 import { prisma } from "../config/prisma";
 import { env } from "../config/env";
-import { enqueueTransferJobs } from "./queues";
-import type { TransferCommittedPayload } from "./types";
+import { enqueueNotificationEvent, enqueueTransferJobs } from "./queues";
+import type {
+  NotificationEventPayload,
+  NotificationType,
+  TransferCommittedPayload,
+} from "./types";
 
 let timer: NodeJS.Timeout | null = null;
 let publishing = false;
@@ -30,45 +34,125 @@ export const publishPendingOutboxEvents = async (): Promise<void> => {
             WHERE id = ${candidate.id}::uuid AND status = 'PENDING'
             FOR UPDATE SKIP LOCKED
           `;
+
           if (locked.length === 0) return;
 
           const event = await tx.outboxEvent.findUnique({
             where: { id: candidate.id },
           });
+
           if (!event || event.status !== "PENDING") return;
 
           try {
-            if (event.eventType !== "TRANSFER_COMMITTED") {
-              throw new Error(`Unsupported outbox event type: ${event.eventType}`);
-            }
-            const payload = event.payload as unknown as {
-              transactionId?: unknown;
-              actorUserId?: unknown;
-            };
-            if (typeof payload.transactionId !== "string" || typeof payload.actorUserId !== "string") {
-              throw new Error(`Invalid payload for outbox event ${event.id}`);
-            }
+            if (event.eventType === "TRANSFER_COMMITTED") {
+              const payload = event.payload as unknown as {
+                transactionId?: unknown;
+                actorUserId?: unknown;
+              };
 
-            await enqueueTransferJobs({
-              outboxEventId: event.id,
-              transactionId: payload.transactionId,
-              actorUserId: payload.actorUserId,
-            } satisfies TransferCommittedPayload);
+              if (
+                typeof payload.transactionId !== "string" ||
+                typeof payload.actorUserId !== "string"
+              ) {
+                throw new Error(
+                  `Invalid payload for outbox event ${event.id}`,
+                );
+              }
+
+              await enqueueTransferJobs({
+                outboxEventId: event.id,
+                transactionId: payload.transactionId,
+                actorUserId: payload.actorUserId,
+              } satisfies TransferCommittedPayload);
+            } else if (event.eventType === "NOTIFICATION_REQUESTED") {
+              const payload = event.payload as unknown as {
+                userId?: unknown;
+                notificationType?: unknown;
+                title?: unknown;
+                message?: unknown;
+                metadata?: unknown;
+              };
+
+              const allowedTypes: NotificationType[] = [
+                "TRANSFER_SUCCESS",
+                "TRANSFER_FAILED",
+                "DEPOSIT_SUCCESS",
+                "WITHDRAWAL_SUCCESS",
+                "ACCOUNT_BLOCKED",
+                "SECURITY_ALERT",
+              ];
+
+              if (
+                typeof payload.userId !== "string" ||
+                typeof payload.notificationType !== "string" ||
+                !allowedTypes.includes(
+                  payload.notificationType as NotificationType,
+                ) ||
+                typeof payload.title !== "string" ||
+                typeof payload.message !== "string" ||
+                (payload.metadata !== undefined &&
+                  (payload.metadata === null ||
+                    typeof payload.metadata !== "object" ||
+                    Array.isArray(payload.metadata)))
+              ) {
+                throw new Error(
+                  `Invalid notification payload for outbox event ${event.id}`,
+                );
+              }
+
+              // Omit metadata entirely when it is undefined.
+              // This is compatible with exactOptionalPropertyTypes: true.
+              const notificationPayload: NotificationEventPayload = {
+                outboxEventId: event.id,
+                userId: payload.userId,
+                notificationType:
+                  payload.notificationType as NotificationType,
+                title: payload.title,
+                message: payload.message,
+                ...(payload.metadata !== undefined
+                  ? {
+                      metadata: payload.metadata as Record<
+                        string,
+                        string | number | boolean | null
+                      >,
+                    }
+                  : {}),
+              };
+
+              await enqueueNotificationEvent(notificationPayload);
+            } else {
+              throw new Error(
+                `Unsupported outbox event type: ${event.eventType}`,
+              );
+            }
 
             await tx.outboxEvent.update({
               where: { id: event.id },
-              data: { status: "PUBLISHED", publishedAt: new Date(), attempts: { increment: 1 }, lastError: null },
+              data: {
+                status: "PUBLISHED",
+                publishedAt: new Date(),
+                attempts: { increment: 1 },
+                lastError: null,
+              },
             });
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message =
+              error instanceof Error ? error.message : String(error);
+
             // Keep the event pending. If Redis accepted only some jobs, their
             // stable IDs make the next attempt idempotent.
             await tx.outboxEvent.update({
               where: { id: event.id },
-              data: { attempts: { increment: 1 }, lastError: message.slice(0, 2000) },
+              data: {
+                attempts: { increment: 1 },
+                lastError: message.slice(0, 2000),
+              },
             });
+
             console.error("[outbox] event publish failed", {
-              eventId: event.id, eventType: event.eventType, error: message,
+              eventId: event.id,
+              eventType: event.eventType,
+              error: message,
             });
           }
         });
@@ -90,10 +174,13 @@ export const publishPendingOutboxEvents = async (): Promise<void> => {
 
 export const startOutboxPublisher = (): void => {
   if (timer) return;
+
   void publishPendingOutboxEvents();
+
   timer = setInterval(() => {
     void publishPendingOutboxEvents();
   }, env.backgroundJobs.outboxPollIntervalMs);
+
   timer.unref();
 };
 

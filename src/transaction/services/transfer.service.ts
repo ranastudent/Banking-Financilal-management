@@ -1061,6 +1061,42 @@ export const prepareTransfer = async (
 
     return result;
   } catch (error) {
+    // Notify only actionable business failures; validation/authentication and
+    // unexpected infrastructure errors should not generate noisy user alerts.
+    if (
+      error instanceof AppError &&
+      (error.code === ErrorCode.INSUFFICIENT_BALANCE ||
+        error.code === ErrorCode.TRANSACTION_LIMIT_EXCEEDED)
+    ) {
+      if (prisma.outboxEvent?.create) {
+        try {
+          await prisma.outboxEvent.create({
+            data: {
+              eventType: "NOTIFICATION_REQUESTED",
+              payload: {
+                userId: user.id,
+                notificationType: "TRANSFER_FAILED",
+                title: "Transfer unsuccessful",
+                message: "Your transfer could not be completed. Review your available balance and transaction limits, then try again if appropriate.",
+                metadata: {
+                  failureCode: error.code,
+                },
+              },
+            },
+          });
+        } catch (notificationError) {
+          // Preserve the original financial-operation error if notification
+          // persistence is temporarily unavailable.
+          console.error("[transfer] unable to record failure notification", {
+            userId: user.id,
+            error: notificationError instanceof Error
+              ? notificationError.message
+              : String(notificationError),
+          });
+        }
+      }
+    }
+
     perfLog("transaction failed", {
       perfTransferId,
       totalTransactionCallDurationMs:

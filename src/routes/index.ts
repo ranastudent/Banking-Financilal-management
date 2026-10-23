@@ -27,6 +27,7 @@ import auditorFxRequestRoutes from "../auditor/routes/fx-request.routes";
 import userRoutes from "../user/routes/user.routes";
 import accountRoutes from "../account/routes/account.routes";
 import transferRoutes from "../transaction/routes/transfer.routes";
+import notificationRoutes from "../notifications/routes/notification.routes";
 
 const router = Router();
 
@@ -58,5 +59,6 @@ router.use("/auditor/approval-records", auditorApprovalRecordRoutes,);
 router.use("/auditor/fx-requests", auditorFxRequestRoutes,); 
 router.use("/users", userRoutes);
 router.use("/accounts", accountRoutes);
+router.use("/notifications", notificationRoutes);
 
 export default router;

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   queryRaw: vi.fn(),
   enqueueTransferJobs: vi.fn(),
+  enqueueNotificationEvent: vi.fn(),
 }));
 
 vi.mock("../../config/prisma", () => ({
@@ -21,6 +22,7 @@ vi.mock("../../config/prisma", () => ({
 }));
 vi.mock("../../jobs/queues", () => ({
   enqueueTransferJobs: mocks.enqueueTransferJobs,
+  enqueueNotificationEvent: mocks.enqueueNotificationEvent,
 }));
 
 import { publishPendingOutboxEvents } from "../../jobs/outbox-publisher";
@@ -40,6 +42,7 @@ describe("outbox publisher reliability", () => {
     mocks.findUnique.mockResolvedValue(event);
     mocks.update.mockResolvedValue({ ...event, status: "PUBLISHED" });
     mocks.enqueueTransferJobs.mockResolvedValue(undefined);
+    mocks.enqueueNotificationEvent.mockResolvedValue(undefined);
     mocks.transaction.mockImplementation(async (callback: any) =>
       callback({
         $queryRaw: mocks.queryRaw,
@@ -81,5 +84,63 @@ describe("outbox publisher reliability", () => {
     await publishPendingOutboxEvents();
     expect(mocks.enqueueTransferJobs).not.toHaveBeenCalled();
     expect(mocks.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("notification outbox events", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.findMany.mockResolvedValue([{ id: event.id }]);
+    mocks.queryRaw.mockResolvedValue([{ id: event.id }]);
+    mocks.findUnique.mockResolvedValue({
+      ...event,
+      eventType: "NOTIFICATION_REQUESTED",
+      payload: {
+        userId: "user-42",
+        notificationType: "DEPOSIT_SUCCESS",
+        title: "Deposit successful",
+        message: "Your deposit was recorded.",
+        metadata: { transactionId: "tx-42" },
+      },
+    });
+    mocks.update.mockResolvedValue({ ...event, status: "PUBLISHED" });
+    mocks.enqueueTransferJobs.mockResolvedValue(undefined);
+    mocks.enqueueNotificationEvent.mockResolvedValue(undefined);
+    mocks.transaction.mockImplementation(async (callback: any) =>
+      callback({
+        $queryRaw: mocks.queryRaw,
+        outboxEvent: { findUnique: mocks.findUnique, update: mocks.update },
+      }),
+    );
+  });
+
+  it("publishes a validated notification event with a stable outbox ID", async () => {
+    await publishPendingOutboxEvents();
+    expect(mocks.enqueueNotificationEvent).toHaveBeenCalledWith({
+      outboxEventId: event.id,
+      userId: "user-42",
+      notificationType: "DEPOSIT_SUCCESS",
+      title: "Deposit successful",
+      message: "Your deposit was recorded.",
+      metadata: { transactionId: "tx-42" },
+    });
+    expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: event.id },
+      data: expect.objectContaining({ status: "PUBLISHED" }),
+    }));
+  });
+
+  it("leaves invalid notification events pending for retry/inspection", async () => {
+    mocks.findUnique.mockResolvedValueOnce({
+      ...event,
+      eventType: "NOTIFICATION_REQUESTED",
+      payload: { userId: "user-42", notificationType: "UNKNOWN", title: "x", message: "y" },
+    });
+    await publishPendingOutboxEvents();
+    expect(mocks.enqueueNotificationEvent).not.toHaveBeenCalled();
+    expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: event.id },
+      data: expect.objectContaining({ attempts: { increment: 1 }, lastError: expect.any(String) }),
+    }));
   });
 });

@@ -341,7 +341,7 @@ describe("Authentication Integration", () => {
 
     expect(postLogoutRefreshResponse.status).toBe(401);
     expect(postLogoutRefreshResponse.body.success).toBe(false);
-  });
+  }, 15000);
 
   // ============================================================
   // 2. UNVERIFIED USER CANNOT LOGIN

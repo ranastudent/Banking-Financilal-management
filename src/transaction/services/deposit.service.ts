@@ -376,6 +376,25 @@ export const prepareDeposit = async (
       "after-audit",
     );
 
+    await tx.outboxEvent.create({
+      data: {
+        eventType: "NOTIFICATION_REQUESTED",
+        payload: {
+          userId: account.user_id,
+          notificationType: "DEPOSIT_SUCCESS",
+          title: "Deposit successful",
+          message: `Your deposit of ${amount.toString()} ${currency.code} was recorded successfully. Reference: ${transaction.reference}.`,
+          metadata: {
+            transactionId: transaction.id,
+            transactionReference: transaction.reference,
+            accountId: account.id,
+            amount: amount.toString(),
+            currencyCode: currency.code,
+          },
+        },
+      },
+    });
+
      return {
       account: {
         id: account.id,

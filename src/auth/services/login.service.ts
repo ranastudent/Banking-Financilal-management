@@ -93,6 +93,35 @@ export const loginUser = async (input: LoginInput) => {
     },
   });
 
+  // Security alerts are an asynchronous side effect. Do not turn a successful
+  // login into a failed login if outbox persistence has a transient problem.
+  // Other financial notifications use an outbox event in their business
+  // transaction; login alert reliability can be tightened by moving token
+  // creation and this insert into one transaction in a later auth hardening pass.
+  if (prisma.outboxEvent?.create) {
+    try {
+      await prisma.outboxEvent.create({
+        data: {
+          eventType: "NOTIFICATION_REQUESTED",
+          payload: {
+            userId: user.id,
+            notificationType: "SECURITY_ALERT",
+            title: "New sign-in",
+            message: "A successful sign-in to your banking platform account occurred. If this was not you, contact support immediately.",
+            metadata: {
+              event: "SUCCESSFUL_LOGIN",
+            },
+          },
+        },
+      });
+    } catch (error) {
+      console.error("[auth] unable to record successful-login security alert", {
+        userId: user.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   return {
     user: {
       id: user.id,

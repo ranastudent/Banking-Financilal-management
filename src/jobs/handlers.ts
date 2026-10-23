@@ -3,7 +3,7 @@ import { prisma } from "../config/prisma";
 import { sendEmail } from "../utils/mailer";
 import { env } from "../config/env";
 import { enqueueEmailRecipientJobs } from "./queues";
-import type { ReportJobPayload, TransferCommittedPayload } from "./types";
+import type { NotificationEventPayload, ReportJobPayload, TransferCommittedPayload } from "./types";
 
 const getTransfer = async (transactionId: string) => {
   const transaction = await prisma.transaction.findUnique({
@@ -120,7 +120,7 @@ export const handleSendNotification = async (
       },
       create: {
         userId: item.userId,
-        type: "TRANSACTION",
+        type: "TRANSFER_SUCCESS" as never,
         title: "Transfer completed",
         message,
         channel: "IN_APP",
@@ -137,6 +137,38 @@ export const handleSendNotification = async (
       update: {},
     });
   }
+};
+
+export const handleSendNotificationEvent = async (
+  payload: NotificationEventPayload,
+): Promise<void> => {
+  if (!payload.userId || !payload.outboxEventId) {
+    throw new Error("Notification event is missing its user or outbox event ID");
+  }
+
+  await prisma.notification.upsert({
+    where: {
+      dedupeKey: `${payload.outboxEventId}-${payload.userId}`,
+    },
+    create: {
+      userId: payload.userId,
+      // Prisma Client must be regenerated after adding the new enum values
+      // to schema.prisma. The cast keeps source compatibility with older
+      // generated clients during the staged migration.
+      type: payload.notificationType as never,
+      title: payload.title,
+      message: payload.message,
+      channel: "IN_APP",
+      status: "SENT",
+      dedupeKey: `${payload.outboxEventId}-${payload.userId}`,
+      metadata: {
+        ...(payload.metadata ?? {}),
+        outboxEventId: payload.outboxEventId,
+        notificationType: payload.notificationType,
+      },
+    },
+    update: {},
+  });
 };
 
 export const handleProcessAuditEvent = async (

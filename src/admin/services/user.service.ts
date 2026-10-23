@@ -135,6 +135,25 @@ export const updateAdminUserStatus = async (
       },
     });
 
+    if (status === "BLOCKED" && user.status !== "BLOCKED") {
+      await tx.outboxEvent.create({
+        data: {
+          eventType: "NOTIFICATION_REQUESTED",
+          payload: {
+            userId: user.id,
+            notificationType: "ACCOUNT_BLOCKED",
+            title: "Account blocked",
+            message: "Your banking platform account has been blocked. Contact support if you believe this is a mistake.",
+            metadata: {
+              previousStatus: user.status,
+              newStatus: status,
+              changedBy: adminUserId,
+            },
+          },
+        },
+      });
+    }
+
     return updated;
   });
 

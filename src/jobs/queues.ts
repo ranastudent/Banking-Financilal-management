@@ -4,6 +4,7 @@ import { createBullMqQueueConnection } from "./connection";
 import type {
   BackgroundJobData,
   BackgroundJobName,
+  NotificationEventPayload,
   ReportJobPayload,
   TransferCommittedPayload,
 } from "./types";
@@ -59,6 +60,17 @@ export const enqueueTransferJobs = async (
       transferJobOptions(payload.outboxEventId, job.suffix),
     );
   }
+};
+
+/** Enqueue one durable in-app notification job with a stable event-scoped ID. */
+export const enqueueNotificationEvent = async (
+  payload: NotificationEventPayload,
+): Promise<void> => {
+  await backgroundQueue.add(
+    "send-notification-event",
+    payload,
+    { jobId: `${payload.outboxEventId}-notification-${payload.userId}` },
+  );
 };
 
 /** Queue one email job per recipient so a failure for one recipient cannot

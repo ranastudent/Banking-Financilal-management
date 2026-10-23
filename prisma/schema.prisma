@@ -544,17 +544,16 @@ enum NotificationStatus {
   READ
 }
 
-
 model OutboxEvent {
-  id          String           @id @default(uuid()) @db.Uuid
-  eventType   String           @map("event_type")
+  id          String            @id @default(uuid()) @db.Uuid
+  eventType   String            @map("event_type")
   payload     Json
   status      OutboxEventStatus @default(PENDING)
-  attempts    Int              @default(0)
-  lastError   String?          @map("last_error")
-  publishedAt DateTime?        @map("published_at")
-  createdAt   DateTime         @default(now()) @map("created_at")
-  updatedAt   DateTime         @updatedAt @map("updated_at")
+  attempts    Int               @default(0)
+  lastError   String?           @map("last_error")
+  publishedAt DateTime?         @map("published_at")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
 
   @@index([status, createdAt])
   @@map("outbox_events")
@@ -575,7 +574,7 @@ model BackgroundReport {
 }
 
 model RiskAnalysis {
-  id            String   @id @default(uuid()) @db.Uuid
+  id            String      @id @default(uuid()) @db.Uuid
   transactionId String      @unique @map("transaction_id") @db.Uuid
   riskLevel     String      @map("risk_level")
   reasons       Json

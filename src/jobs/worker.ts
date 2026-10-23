@@ -13,14 +13,16 @@ import {
   handleRiskAnalysis,
   handleSendEmail,
   handleSendNotification,
+  handleSendNotificationEvent,
 } from "./handlers";
 import type {
   BackgroundJobData,
   BackgroundJobName,
+  NotificationEventPayload,
   ReportJobPayload,
   TransferCommittedPayload,
 } from "./types";
-import { isTransferCommittedPayload } from "./types";
+import { isNotificationEventPayload, isTransferCommittedPayload } from "./types";
 
 let workerConnection: ReturnType<typeof createBullMqConnection> | null = null;
 let worker: Worker<BackgroundJobData, void, BackgroundJobName> | null = null;
@@ -35,6 +37,11 @@ const createWorker = (): Worker<BackgroundJobData, void, BackgroundJobName> => {
       });
       if (job.name === "generate-report") {
         await handleGenerateReport(job.data as ReportJobPayload, job.timestamp);
+      } else if (job.name === "send-notification-event") {
+        if (!isNotificationEventPayload(job.data)) {
+          throw new Error(`Invalid notification-event payload for job ${job.name}`);
+        }
+        await handleSendNotificationEvent(job.data as NotificationEventPayload);
       } else {
         if (!isTransferCommittedPayload(job.data)) throw new Error(`Invalid payload for job ${job.name}`);
         const payload = job.data as TransferCommittedPayload;
