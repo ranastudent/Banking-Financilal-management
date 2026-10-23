@@ -6,6 +6,11 @@ datasource db {
   provider = "postgresql"
 }
 
+enum OutboxEventStatus {
+  PENDING
+  PUBLISHED
+}
+
 model User {
   id                      String                   @id @default(uuid()) @db.Uuid
   name                    String
@@ -152,6 +157,7 @@ model Transaction {
   ledgerEntries               LedgerEntry[]
   reserveMovements            ReserveMovement[]
   legs                        TransactionLeg[]
+  riskAnalysis                RiskAnalysis?
   currency                    Currency                     @relation(fields: [currencyCode], references: [code])
   destinationAccount          Account?                     @relation("TransactionDestinationAccount", fields: [destinationAccountId], references: [id])
   sourceAccount               Account?                     @relation("TransactionSourceAccount", fields: [sourceAccountId], references: [id])
@@ -318,6 +324,7 @@ model Notification {
   channel   NotificationChannel
   status    NotificationStatus  @default(PENDING)
   metadata  Json?
+  dedupeKey String?             @unique @map("dedupe_key")
   createdAt DateTime            @default(now()) @map("created_at")
   readAt    DateTime?           @map("read_at")
   user      User                @relation(fields: [userId], references: [id])
@@ -535,4 +542,47 @@ enum NotificationStatus {
   SENT
   FAILED
   READ
+}
+
+
+model OutboxEvent {
+  id          String           @id @default(uuid()) @db.Uuid
+  eventType   String           @map("event_type")
+  payload     Json
+  status      OutboxEventStatus @default(PENDING)
+  attempts    Int              @default(0)
+  lastError   String?          @map("last_error")
+  publishedAt DateTime?        @map("published_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  @@index([status, createdAt])
+  @@map("outbox_events")
+}
+
+model BackgroundReport {
+  id          String   @id @default(uuid()) @db.Uuid
+  reportType  String   @map("report_type")
+  dedupeKey   String   @unique @map("dedupe_key")
+  periodStart DateTime @map("period_start")
+  periodEnd   DateTime @map("period_end")
+  payload     Json
+  generatedAt DateTime @default(now()) @map("generated_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([reportType, generatedAt])
+  @@map("background_reports")
+}
+
+model RiskAnalysis {
+  id            String   @id @default(uuid()) @db.Uuid
+  transactionId String      @unique @map("transaction_id") @db.Uuid
+  riskLevel     String      @map("risk_level")
+  reasons       Json
+  analyzedAt    DateTime    @default(now()) @map("analyzed_at")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([riskLevel, analyzedAt])
+  @@map("risk_analyses")
 }

@@ -1104,20 +1104,23 @@ describe(
           "ADMIN",
         );
 
-      const { fxRequest } =
+      const { fxRequest, currency } =
         await createTestFxRequest();
 
       const token =
         createAccessToken(admin);
 
-      const transactionCountBefore =
-        await prisma.transaction.count();
-
-      const ledgerCountBefore =
-        await prisma.ledgerEntry.count();
-
-      const reserveMovementCountBefore =
-        await prisma.reserveMovement.count();
+      // Scope assertions to this test's unique currency so concurrent test
+      // files cannot create false count differences in the shared database.
+      const transactionCountBefore = await prisma.transaction.count({
+        where: { currencyCode: currency.code },
+      });
+      const ledgerCountBefore = await prisma.ledgerEntry.count({
+        where: { currencyCode: currency.code },
+      });
+      const reserveMovementCountBefore = await prisma.reserveMovement.count({
+        where: { currencyCode: currency.code },
+      });
 
       const response =
         await request(app)
@@ -1138,14 +1141,15 @@ describe(
         response.status,
       ).toBe(200);
 
-      const transactionCountAfter =
-        await prisma.transaction.count();
-
-      const ledgerCountAfter =
-        await prisma.ledgerEntry.count();
-
-      const reserveMovementCountAfter =
-        await prisma.reserveMovement.count();
+      const transactionCountAfter = await prisma.transaction.count({
+        where: { currencyCode: currency.code },
+      });
+      const ledgerCountAfter = await prisma.ledgerEntry.count({
+        where: { currencyCode: currency.code },
+      });
+      const reserveMovementCountAfter = await prisma.reserveMovement.count({
+        where: { currencyCode: currency.code },
+      });
 
       expect(
         transactionCountAfter,

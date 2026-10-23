@@ -5,6 +5,7 @@ import { transferSchema } from "../../transaction/schemas/transfer.schema";
 describe("Transfer Request Schema", () => {
   it("should accept a valid BDT transfer", () => {
     const result = transferSchema.safeParse({
+      senderAccount: "ACC-1001",
       receiverAccount: "ACC-2002",
       amount: "5000.00",
       currency: "BDT",
@@ -14,6 +15,7 @@ describe("Transfer Request Schema", () => {
 
     if (result.success) {
       expect(result.data).toEqual({
+        senderAccount: "ACC-1001",
         receiverAccount: "ACC-2002",
         amount: "5000.00",
         currency: "BDT",
@@ -23,6 +25,7 @@ describe("Transfer Request Schema", () => {
 
   it("should normalize currency to uppercase", () => {
     const result = transferSchema.safeParse({
+      senderAccount: "ACC-1001",
       receiverAccount: "ACC-2002",
       amount: "5000.00",
       currency: "usd",
@@ -37,6 +40,7 @@ describe("Transfer Request Schema", () => {
 
   it("should trim receiver account, amount, and currency whitespace", () => {
     const result = transferSchema.safeParse({
+      senderAccount: "ACC-1001",
       receiverAccount: " ACC-2002 ",
       amount: " 5000.00 ",
       currency: " bdt ",
@@ -53,6 +57,7 @@ describe("Transfer Request Schema", () => {
 
   it("should accept an amount with up to 8 decimal places", () => {
     const result = transferSchema.safeParse({
+      senderAccount: "ACC-1001",
       receiverAccount: "ACC-2002",
       amount: "5000.12345678",
       currency: "BDT",
@@ -63,6 +68,7 @@ describe("Transfer Request Schema", () => {
 
   it("should reject zero amount", () => {
     const result = transferSchema.safeParse({
+      senderAccount: "ACC-1001",
       receiverAccount: "ACC-2002",
       amount: "0",
       currency: "BDT",
@@ -73,6 +79,7 @@ describe("Transfer Request Schema", () => {
 
   it("should reject zero decimal amount", () => {
     const result = transferSchema.safeParse({
+      senderAccount: "ACC-1001",
       receiverAccount: "ACC-2002",
       amount: "0.00",
       currency: "BDT",
@@ -83,6 +90,7 @@ describe("Transfer Request Schema", () => {
 
   it("should reject negative amount", () => {
     const result = transferSchema.safeParse({
+      senderAccount: "ACC-1001",
       receiverAccount: "ACC-2002",
       amount: "-100.00",
       currency: "BDT",
@@ -93,6 +101,7 @@ describe("Transfer Request Schema", () => {
 
   it("should reject non-numeric amount", () => {
     const result = transferSchema.safeParse({
+      senderAccount: "ACC-1001",
       receiverAccount: "ACC-2002",
       amount: "abc",
       currency: "BDT",
@@ -103,6 +112,7 @@ describe("Transfer Request Schema", () => {
 
   it("should reject amount with more than 8 decimal places", () => {
     const result = transferSchema.safeParse({
+      senderAccount: "ACC-1001",
       receiverAccount: "ACC-2002",
       amount: "100.123456789",
       currency: "BDT",
@@ -113,6 +123,7 @@ describe("Transfer Request Schema", () => {
 
   it("should reject an empty receiver account", () => {
     const result = transferSchema.safeParse({
+      senderAccount: "ACC-1001",
       receiverAccount: "",
       amount: "5000.00",
       currency: "BDT",
@@ -132,6 +143,7 @@ describe("Transfer Request Schema", () => {
 
   it("should reject a request without amount", () => {
     const result = transferSchema.safeParse({
+      senderAccount: "ACC-1001",
       receiverAccount: "ACC-2002",
       currency: "BDT",
     });
@@ -141,6 +153,7 @@ describe("Transfer Request Schema", () => {
 
   it("should reject a request without currency", () => {
     const result = transferSchema.safeParse({
+      senderAccount: "ACC-1001",
       receiverAccount: "ACC-2002",
       amount: "5000.00",
     });
@@ -148,12 +161,11 @@ describe("Transfer Request Schema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("should reject client-provided sender account", () => {
+  it("should reject a request without sender account", () => {
     const result = transferSchema.safeParse({
       receiverAccount: "ACC-2002",
       amount: "5000.00",
       currency: "BDT",
-      senderAccount: "ACC-1001",
     });
 
     expect(result.success).toBe(false);
@@ -161,6 +173,7 @@ describe("Transfer Request Schema", () => {
 
   it("should reject client-provided balance", () => {
     const result = transferSchema.safeParse({
+      senderAccount: "ACC-1001",
       receiverAccount: "ACC-2002",
       amount: "5000.00",
       currency: "BDT",
@@ -172,6 +185,7 @@ describe("Transfer Request Schema", () => {
 
   it("should reject client-provided status", () => {
     const result = transferSchema.safeParse({
+      senderAccount: "ACC-1001",
       receiverAccount: "ACC-2002",
       amount: "5000.00",
       currency: "BDT",
@@ -183,6 +197,7 @@ describe("Transfer Request Schema", () => {
 
   it("should reject arbitrary extra fields", () => {
     const result = transferSchema.safeParse({
+      senderAccount: "ACC-1001",
       receiverAccount: "ACC-2002",
       amount: "5000.00",
       currency: "BDT",

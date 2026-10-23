@@ -224,6 +224,36 @@ export const env = {
   },
 
   // ==========================================
+  // BACKGROUND JOBS
+  // ==========================================
+
+  backgroundJobs: {
+    outboxPollIntervalMs: parsePositiveNumber(
+      process.env.OUTBOX_POLL_INTERVAL_MS,
+      1000,
+      "OUTBOX_POLL_INTERVAL_MS",
+    ),
+    outboxBatchSize: parsePositiveNumber(
+      process.env.OUTBOX_BATCH_SIZE,
+      50,
+      "OUTBOX_BATCH_SIZE",
+    ),
+    riskAnalysis: {
+      windowMinutes: parsePositiveNumber(
+        process.env.RISK_ANALYSIS_WINDOW_MINUTES,
+        60,
+        "RISK_ANALYSIS_WINDOW_MINUTES",
+      ),
+      maxTransfersPerWindow: parsePositiveNumber(
+        process.env.RISK_ANALYSIS_MAX_TRANSFERS_PER_WINDOW,
+        10,
+        "RISK_ANALYSIS_MAX_TRANSFERS_PER_WINDOW",
+      ),
+    },
+    dailyReportCron: process.env.DAILY_REPORT_CRON?.trim() || "0 1 * * *",
+  },
+
+  // ==========================================
   // WITHDRAWAL
   // ==========================================
 

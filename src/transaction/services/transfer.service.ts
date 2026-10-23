@@ -333,7 +333,7 @@ export const prepareTransfer = async (
 
   if (!preflightSender) {
     throw new AppError(
-      "Sender account not found",
+      "Account not found",
       404,
       ErrorCode.RESOURCE_NOT_FOUND,
     );
@@ -343,7 +343,7 @@ export const prepareTransfer = async (
 
   if (!preflightReceiver) {
     throw new AppError(
-      "Receiver account not found",
+      "Account not found",
       404,
       ErrorCode.RESOURCE_NOT_FOUND,
     );
@@ -499,7 +499,7 @@ export const prepareTransfer = async (
 
         if (!sender) {
           throw new AppError(
-            "Sender account not found",
+            "Account not found",
             404,
             ErrorCode.RESOURCE_NOT_FOUND,
           );
@@ -507,7 +507,7 @@ export const prepareTransfer = async (
 
         if (!receiver) {
           throw new AppError(
-            "Receiver account not found",
+            "Account not found",
             404,
             ErrorCode.RESOURCE_NOT_FOUND,
           );
@@ -1010,6 +1010,23 @@ export const prepareTransfer = async (
                "AFTER_IDEMPOTENCY_COMPLETION",
           );
         }
+
+        /*
+         * Phase 23: transactional outbox.
+         *
+         * This event is committed atomically with the transfer, ledger,
+         * idempotency record and audit log. Redis/queue availability does
+         * not affect the financial transaction's commit path.
+         */
+        await tx.outboxEvent.create({
+          data: {
+            eventType: "TRANSFER_COMMITTED",
+            payload: {
+              transactionId: transferResult.transaction.id,
+              actorUserId: user.id,
+            },
+          },
+        });
 
         perfLog(
           "transaction callback completed",

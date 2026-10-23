@@ -3,6 +3,7 @@ import { env } from "./config/env";
 import { prisma } from "./config/prisma";
 import { ensureRedisConnected, redis } from "./config/redis";
 import { shutdown } from "./utils/shutdown";
+import { startOutboxPublisher } from "./jobs/outbox-publisher";
 
 async function startServer() {
   try {
@@ -17,6 +18,13 @@ async function startServer() {
     // --------------------------------
     await ensureRedisConnected();
     console.log("Redis connected successfully");
+
+    // --------------------------------
+    // Start transactional-outbox publisher
+    // --------------------------------
+    // Transfer events are persisted in PostgreSQL inside the transfer
+    // transaction; this publisher forwards committed events to BullMQ.
+    startOutboxPublisher();
 
     // --------------------------------
     // Start HTTP server

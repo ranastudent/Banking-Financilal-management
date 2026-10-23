@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "postinstall": "prisma skills sync || exit 0",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "worker": "node dist/jobs/worker.js",
+    "worker:dev": "tsx src/jobs/worker.ts"
   },
   "keywords": [
     "banking",
@@ -42,11 +44,13 @@
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "bcrypt": "^6.0.0",
+    "bullmq": "^5.58.5",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
     "helmet": "^8.3.0",
+    "ioredis": "^5.6.1",
     "jsonwebtoken": "^9.0.3",
     "nodemailer": "^10.0.0",
     "pg": "^8.23.0",

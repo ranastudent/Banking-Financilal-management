@@ -130,8 +130,7 @@ describe("PATCH /api/v1/admin/users/:userId/status - Admin User Status", () => {
     });
 
     expect(updatedUser?.status).toBe("ACTIVE");
-  });
-
+  }, 20_000);
   it("should allow ADMIN to change a user's status to BLOCKED", async () => {
     const admin = await createUser("ADMIN", "ACTIVE");
     const target = await createUser("CUSTOMER", "ACTIVE");

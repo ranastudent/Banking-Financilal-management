@@ -11,8 +11,15 @@ describe("Fund Transfer - Transaction Record", () => {
   const createdAccountIds: string[] = [];
   const createdTransactionIds: string[] = [];
   const createdIdempotencyRecordIds: string[] = [];
+  const createdOutboxEventIds: string[] = [];
 
   afterEach(async () => {
+    if (createdOutboxEventIds.length > 0) {
+      await prisma.outboxEvent.deleteMany({
+        where: { id: { in: createdOutboxEventIds } },
+      });
+    }
+
     /*
      * Delete idempotency records created by these tests.
      */
@@ -128,6 +135,7 @@ describe("Fund Transfer - Transaction Record", () => {
     }
 
     createdIdempotencyRecordIds.length = 0;
+    createdOutboxEventIds.length = 0;
     createdTransactionIds.length = 0;
     createdAccountIds.length = 0;
     createdUserIds.length = 0;
@@ -247,6 +255,7 @@ describe("Fund Transfer - Transaction Record", () => {
 
     const accessToken =
       createAccessToken(sender);
+    const transferStartedAt = new Date(Date.now() - 1000);
 
     const idempotencyKey =
       createIdempotencyKey(
@@ -353,6 +362,20 @@ describe("Fund Transfer - Transaction Record", () => {
     createdTransactionIds.push(
       transaction.id,
     );
+
+    // The transactional outbox record must be committed with the transfer.
+    const outboxEvents = await prisma.outboxEvent.findMany({
+      where: { eventType: "TRANSFER_COMMITTED", createdAt: { gte: transferStartedAt } },
+      orderBy: { createdAt: "desc" },
+    });
+    const transferOutboxEvent = outboxEvents.find((candidate) =>
+      typeof candidate.payload === "object" &&
+      candidate.payload !== null &&
+      !Array.isArray(candidate.payload) &&
+      (candidate.payload as { transactionId?: unknown }).transactionId === transaction.id,
+    );
+    expect(transferOutboxEvent).toBeDefined();
+    if (transferOutboxEvent) createdOutboxEventIds.push(transferOutboxEvent.id);
 
     /*
      * -------------------------------------------------------

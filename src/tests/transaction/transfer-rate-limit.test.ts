@@ -68,6 +68,8 @@ describe("Phase 21.4 — Transfer-Specific Rate Limiting", () => {
         .post("/api/v1/transfers")
         .set("Authorization", `Bearer ${accessToken}`)
         .set("X-Forwarded-For", testIp)
+        .set("X-Test-Rate-Limit", "true")
+        .set("X-Test-Rate-Limit-Key", `transfer-${testIp}`)
         .send({});
 
       // An empty body should fail validation, but it must
@@ -91,6 +93,8 @@ describe("Phase 21.4 — Transfer-Specific Rate Limiting", () => {
         .post("/api/v1/transfers")
         .set("Authorization", `Bearer ${accessToken}`)
         .set("X-Forwarded-For", freshIp)
+        .set("X-Test-Rate-Limit", "true")
+        .set("X-Test-Rate-Limit-Key", `transfer-${freshIp}`)
         .send({});
 
       expect(response.status).not.toBe(429);
@@ -101,6 +105,8 @@ describe("Phase 21.4 — Transfer-Specific Rate Limiting", () => {
       .post("/api/v1/transfers")
       .set("Authorization", `Bearer ${accessToken}`)
       .set("X-Forwarded-For", freshIp)
+      .set("X-Test-Rate-Limit", "true")
+      .set("X-Test-Rate-Limit-Key", `transfer-${freshIp}`)
       .send({});
 
     expect(response.status).toBe(429);

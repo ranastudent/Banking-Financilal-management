@@ -99,6 +99,7 @@ describe("getTransactionHistoryController", () => {
           page: 2,
           limit: 10,
         },
+        "cursor",
       );
 
       expect(res.status).toHaveBeenCalledWith(200);
@@ -182,6 +183,7 @@ describe("getTransactionHistoryController", () => {
           page: 1,
           limit: 20,
         },
+        "cursor",
       );
 
       expect(res.status).toHaveBeenCalledWith(200);

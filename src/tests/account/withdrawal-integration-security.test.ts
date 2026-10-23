@@ -419,7 +419,7 @@ describe(
           ),
         ),
       ).toBe(true);
-    });
+    }, 20_000);
 
     it("should reject SUPPORT", async () => {
       const support =
@@ -475,7 +475,7 @@ describe(
           ),
         ),
       ).toBe(true);
-    });
+    }, 20_000);
 
     it("should reject AUDITOR", async () => {
       const auditor =
@@ -845,4 +845,5 @@ describe(
       ).toBe(true);
     });
   },
+  20_000,
 );

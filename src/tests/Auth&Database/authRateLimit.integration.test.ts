@@ -1,14 +1,18 @@
 import { describe, it, expect } from "vitest";
+import { randomUUID } from "node:crypto";
 import request from "supertest";
 import app from "../../app";
 
 describe("Authentication Rate Limit Integration", () => {
   it("should enforce the authentication rate limit on the login endpoint", async () => {
     const responses = [];
+    const testKey = `auth-integration-${randomUUID()}`;
 
     for (let i = 0; i < 11; i++) {
       const response = await request(app)
         .post("/api/v1/auth/login")
+        .set("X-Test-Rate-Limit", "true")
+        .set("X-Test-Rate-Limit-Key", testKey)
         .send({
           email: "ratelimit@example.com",
           password: "WrongPassword123!",
@@ -24,8 +28,11 @@ describe("Authentication Rate Limit Integration", () => {
   });
 
   it("should return a proper rate-limit error response", async () => {
+    const testKey = `auth-error-${randomUUID()}`;
     let lastResponse = await request(app)
       .post("/api/v1/auth/login")
+      .set("X-Test-Rate-Limit", "true")
+      .set("X-Test-Rate-Limit-Key", testKey)
       .send({
         email: "ratelimit-error@example.com",
         password: "WrongPassword123!",
@@ -34,6 +41,8 @@ describe("Authentication Rate Limit Integration", () => {
     for (let i = 1; i < 11; i++) {
       lastResponse = await request(app)
         .post("/api/v1/auth/login")
+        .set("X-Test-Rate-Limit", "true")
+        .set("X-Test-Rate-Limit-Key", testKey)
         .send({
           email: "ratelimit-error@example.com",
           password: "WrongPassword123!",

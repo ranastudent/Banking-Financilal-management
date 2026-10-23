@@ -9,17 +9,22 @@ import { requestIdMiddleware } from "../../middleware/requestId";
 
 describe("Rate Limiting", () => {
   it("should enforce the authentication rate limit", async () => {
+    const testKey = `auth-${randomUUID()}`;
     const maxRequests = env.rateLimit.auth.max;
 
     for (let i = 0; i < maxRequests; i++) {
       const response = await request(app)
-        .post("/test-validation/auth-rate-limit");
+        .post("/test-validation/auth-rate-limit")
+      .set("X-Test-Rate-Limit", "true")
+      .set("X-Test-Rate-Limit-Key", testKey);
 
       expect(response.status).toBe(200);
     }
 
     const response = await request(app)
-      .post("/test-validation/auth-rate-limit");
+      .post("/test-validation/auth-rate-limit")
+        .set("X-Test-Rate-Limit", "true")
+        .set("X-Test-Rate-Limit-Key", testKey);
 
     expect(response.status).toBe(429);
 
@@ -53,14 +58,18 @@ describe("Rate Limiting", () => {
     for (let i = 0; i < maxRequests; i++) {
       const response = await request(testApp)
         .get("/transaction-history")
-        .set("X-Forwarded-For", testIp);
+      .set("X-Forwarded-For", testIp)
+      .set("X-Test-Rate-Limit", "true")
+      .set("X-Test-Rate-Limit-Key", `history-${testIp}`);
 
       expect(response.status).toBe(200);
     }
 
     const response = await request(testApp)
       .get("/transaction-history")
-      .set("X-Forwarded-For", testIp);
+      .set("X-Forwarded-For", testIp)
+        .set("X-Test-Rate-Limit", "true")
+        .set("X-Test-Rate-Limit-Key", `history-${testIp}`);
 
     expect(response.status).toBe(429);
     expect(response.body.success).toBe(false);
@@ -72,17 +81,22 @@ describe("Rate Limiting", () => {
   });
 
   it("should enforce the OTP rate limit", async () => {
+    const testKey = `otp-${randomUUID()}`;
     const maxRequests = env.rateLimit.otp.max;
 
     for (let i = 0; i < maxRequests; i++) {
       const response = await request(app)
-        .post("/test-validation/otp-rate-limit");
+        .post("/test-validation/otp-rate-limit")
+      .set("X-Test-Rate-Limit", "true")
+      .set("X-Test-Rate-Limit-Key", testKey);
 
       expect(response.status).toBe(200);
     }
 
     const response = await request(app)
-      .post("/test-validation/otp-rate-limit");
+      .post("/test-validation/otp-rate-limit")
+        .set("X-Test-Rate-Limit", "true")
+        .set("X-Test-Rate-Limit-Key", testKey);
 
     expect(response.status).toBe(429);
 
