@@ -10,6 +10,7 @@ import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
 import type { WithdrawalInput } from "../../account/schemas/withdrawal.schema";
 import type { AuthUser } from "../../types/auth";
+import { assertDailyWithdrawalLimit } from "./transaction-limits.service";
 
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -506,6 +507,17 @@ export const prepareWithdrawal = async (
     ensureWithdrawalTransactionLimit(
       amount,
     );
+
+    /*
+     * Phase 27 — Daily withdrawal limit.
+     * The account balance row has already been locked FOR UPDATE, which
+     * serializes withdrawals and transfers that debit this same balance.
+     */
+    await assertDailyWithdrawalLimit(tx, {
+      accountId: account.id,
+      currencyCode: currency.code,
+      amount,
+    });
 
     /*
      * 13.10

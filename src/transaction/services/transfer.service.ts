@@ -11,6 +11,8 @@ import { ErrorCode } from "../../errors/errorCodes";
 import type { AuthUser } from "../../types/auth";
 import type { TransferInput } from "../schemas/transfer.schema";
 import { getTransferAuthorizedAccounts } from "../policies/transfer.policy";
+import { assertTransferAmountWithinLimits } from "../policies/transaction-limits.policy";
+import { assertDailyTransferLimit } from "./transaction-limits.service";
 
 type LockedAccount = {
   id: string;
@@ -256,6 +258,7 @@ export const prepareTransfer = async (
   auditContext: AuditContext = {},
 ) => {
   const amount = new Prisma.Decimal(input.amount);
+  assertTransferAmountWithinLimits(amount);
   const perfTransferId = randomUUID();
 
   /* Currency validation outside transaction */
@@ -615,7 +618,19 @@ export const prepareTransfer = async (
         }
 
         /*
-         * 5. Authoritative balance check
+         * 5. Enforce the daily outgoing transfer limit.
+         * The sender's balance row is already locked FOR UPDATE, so another
+         * transfer/withdrawal from this account must wait until this
+         * transaction commits or rolls back before calculating its total.
+         */
+        await assertDailyTransferLimit(tx, {
+          accountId: sender.id,
+          currencyCode: currency.code,
+          amount,
+        });
+
+        /*
+         * 6. Authoritative balance check
          */
 
         if (

@@ -60,6 +60,22 @@ const parsePositiveDecimalString = (
   return normalized;
 };
 
+const parseTimeZone = (
+  value: string | undefined,
+  fallback: string,
+  name: string,
+): string => {
+  const timeZone = value?.trim() || fallback;
+
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone }).format();
+  } catch {
+    throw new Error(`Invalid environment variable: ${name}`);
+  }
+
+  return timeZone;
+};
+
 export const env = {
   // ==========================================
   // SERVER
@@ -262,6 +278,38 @@ export const env = {
       process.env.WITHDRAWAL_MAX_AMOUNT,
       "50000.00",
       "WITHDRAWAL_MAX_AMOUNT",
+    ),
+  },
+
+  // ==========================================
+  // PHASE 27 — TRANSACTION LIMITS
+  // ==========================================
+
+  transactionLimits: {
+    timeZone: parseTimeZone(
+      process.env.TRANSACTION_LIMIT_TIME_ZONE,
+      "Asia/Dhaka",
+      "TRANSACTION_LIMIT_TIME_ZONE",
+    ),
+    dailyWithdrawalLimit: parsePositiveDecimalString(
+      process.env.DAILY_WITHDRAWAL_LIMIT,
+      "100000.00",
+      "DAILY_WITHDRAWAL_LIMIT",
+    ),
+    dailyTransferLimit: parsePositiveDecimalString(
+      process.env.DAILY_TRANSFER_LIMIT,
+      "100000.00",
+      "DAILY_TRANSFER_LIMIT",
+    ),
+    transferMaxAmount: parsePositiveDecimalString(
+      process.env.TRANSFER_MAX_AMOUNT,
+      "50000.00",
+      "TRANSFER_MAX_AMOUNT",
+    ),
+    transferMinAmount: parsePositiveDecimalString(
+      process.env.TRANSFER_MIN_AMOUNT,
+      "1.00",
+      "TRANSFER_MIN_AMOUNT",
     ),
   },
 };

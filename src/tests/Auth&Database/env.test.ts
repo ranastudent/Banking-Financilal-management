@@ -45,3 +45,16 @@ describe("Environment Configuration", () => {
     expect(env.defaultAdminPassword).toBeTruthy();
   });
 });
+// Phase 27 — Transaction limits
+// These defaults are intentionally configurable through environment variables.
+describe("Phase 27 transaction-limit configuration", () => {
+  it("should expose valid daily and single-transfer limits", () => {
+    expect(env.transactionLimits.timeZone).toBeTruthy();
+    expect(Number(env.transactionLimits.dailyWithdrawalLimit)).toBeGreaterThan(0);
+    expect(Number(env.transactionLimits.dailyTransferLimit)).toBeGreaterThan(0);
+    expect(Number(env.transactionLimits.transferMinAmount)).toBeGreaterThan(0);
+    expect(Number(env.transactionLimits.transferMaxAmount)).toBeGreaterThanOrEqual(
+      Number(env.transactionLimits.transferMinAmount),
+    );
+  });
+});
