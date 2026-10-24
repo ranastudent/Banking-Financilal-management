@@ -57,9 +57,15 @@ describe("Login Controller", () => {
 
     expect(loginUser).toHaveBeenCalledTimes(1);
 
-    expect(loginUser).toHaveBeenCalledWith({
-      email: "login-controller@example.com",
-      password: "StrongPassword123!",
-    });
+    expect(loginUser).toHaveBeenCalledWith(
+      {
+        email: "login-controller@example.com",
+        password: "StrongPassword123!",
+      },
+      expect.objectContaining({
+        requestId: expect.any(String),
+        ipAddress: expect.any(String),
+      }),
+    );
   });
 });

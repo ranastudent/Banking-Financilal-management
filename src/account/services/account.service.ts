@@ -493,7 +493,7 @@ export const updateCustomerAccountStatus = async (
       await writeAuditLog(
         {
           userId,
-          action: status === "FROZEN" ? "ACCOUNT_BLOCKED" : "ACCOUNT_STATUS_CHANGED",
+          action: "ACCOUNT_STATUS_CHANGED",
           resource: "ACCOUNT",
           resourceId: accountId,
           description:

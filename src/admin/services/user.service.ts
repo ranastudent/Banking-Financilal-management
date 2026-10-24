@@ -124,7 +124,7 @@ export const updateAdminUserStatus = async (
     await writeAuditLog(
       {
         userId: adminUserId,
-        action: status === "BLOCKED" ? "ACCOUNT_BLOCKED" : "USER_STATUS_CHANGED",
+        action: "USER_STATUS_CHANGED",
         resource: "USER",
         resourceId: user.id,
         description: `User status changed from ${user.status} to ${status}.`,
