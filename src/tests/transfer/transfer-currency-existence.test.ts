@@ -1,3 +1,4 @@
+import { findUnusedCurrencyCode } from "../helpers/unused-currency";
 import request from "supertest";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -515,7 +516,7 @@ describe("14.7.4 Currency Existence Validation", () => {
     // Unknown currency
     // --------------------------------------------------------
 
-    const unknownCurrency = "ZZZ";
+    const unknownCurrency = await findUnusedCurrencyCode();
 
     const existingCurrency =
       await prisma.currency.findUnique({

@@ -9,10 +9,67 @@ export const createAdminExchangeRate = async (
   ipAddress?: string,
   userAgent?: string,
 ) => {
-  return prisma.$transaction(async (tx) => {
+  // Keep service-level invariants even when this function is called
+  // outside the HTTP/Zod validation path.
+  const baseCurrencyCode = input.baseCurrency.trim().toUpperCase();
+  const quoteCurrencyCode = input.quoteCurrency.trim().toUpperCase();
+
+  if (baseCurrencyCode.length !== 3 || quoteCurrencyCode.length !== 3) {
+    throw new AppError(
+      "Currency codes must contain exactly three letters",
+      400,
+      ErrorCode.VALIDATION_ERROR,
+    );
+  }
+
+  if (baseCurrencyCode === quoteCurrencyCode) {
+    throw new AppError(
+      "Base and quote currencies must be different",
+      400,
+      ErrorCode.VALIDATION_ERROR,
+    );
+  }
+
+  if (!Number.isFinite(input.rate) || input.rate <= 0) {
+    throw new AppError("Rate must be greater than zero", 400, ErrorCode.VALIDATION_ERROR);
+  }
+
+  if (input.buyRate !== undefined &&
+      (!Number.isFinite(input.buyRate) || input.buyRate <= 0 || input.buyRate > input.rate)) {
+    throw new AppError("buyRate must be positive and cannot exceed rate", 400, ErrorCode.VALIDATION_ERROR);
+  }
+
+  if (input.sellRate !== undefined &&
+      (!Number.isFinite(input.sellRate) || input.sellRate <= 0 || input.sellRate < input.rate)) {
+    throw new AppError("sellRate must be positive and cannot be lower than rate", 400, ErrorCode.VALIDATION_ERROR);
+  }
+
+  if (!Number.isInteger(input.version) || input.version < 1) {
+    throw new AppError("Version must be a positive integer", 400, ErrorCode.VALIDATION_ERROR);
+  }
+
+  if (!(input.effectiveFrom instanceof Date) || Number.isNaN(input.effectiveFrom.getTime())) {
+    throw new AppError("effectiveFrom must be a valid date", 400, ErrorCode.VALIDATION_ERROR);
+  }
+
+  if (input.effectiveTo && (
+    Number.isNaN(input.effectiveTo.getTime()) ||
+    input.effectiveTo <= input.effectiveFrom
+  )) {
+    throw new AppError("effectiveTo must be later than effectiveFrom", 400, ErrorCode.VALIDATION_ERROR);
+  }
+
+  const normalizedInput: CreateExchangeRateInput = {
+    ...input,
+    baseCurrency: baseCurrencyCode,
+    quoteCurrency: quoteCurrencyCode,
+  };
+
+  try {
+    return await prisma.$transaction(async (tx) => {
     const baseCurrency = await tx.currency.findUnique({
       where: {
-        code: input.baseCurrency,
+        code: normalizedInput.baseCurrency,
       },
       select: {
         code: true,
@@ -38,7 +95,7 @@ export const createAdminExchangeRate = async (
 
     const quoteCurrency = await tx.currency.findUnique({
       where: {
-        code: input.quoteCurrency,
+        code: normalizedInput.quoteCurrency,
       },
       select: {
         code: true,
@@ -65,8 +122,8 @@ export const createAdminExchangeRate = async (
     const existingVersion = await tx.exchangeRate.findUnique({
       where: {
         baseCurrency_quoteCurrency_version: {
-          baseCurrency: input.baseCurrency,
-          quoteCurrency: input.quoteCurrency,
+          baseCurrency: normalizedInput.baseCurrency,
+          quoteCurrency: normalizedInput.quoteCurrency,
           version: input.version,
         },
       },
@@ -86,8 +143,8 @@ export const createAdminExchangeRate = async (
     if (input.status === "ACTIVE") {
       await tx.exchangeRate.updateMany({
         where: {
-          baseCurrency: input.baseCurrency,
-          quoteCurrency: input.quoteCurrency,
+          baseCurrency: normalizedInput.baseCurrency,
+          quoteCurrency: normalizedInput.quoteCurrency,
           status: "ACTIVE",
         },
         data: {
@@ -99,8 +156,8 @@ export const createAdminExchangeRate = async (
 
     const exchangeRate = await tx.exchangeRate.create({
       data: {
-        baseCurrency: input.baseCurrency,
-        quoteCurrency: input.quoteCurrency,
+        baseCurrency: normalizedInput.baseCurrency,
+        quoteCurrency: normalizedInput.quoteCurrency,
         rate: input.rate,
         ...(input.buyRate !== undefined
             ? { buyRate: input.buyRate }
@@ -128,12 +185,12 @@ export const createAdminExchangeRate = async (
         action: "EXCHANGE_RATE_CREATED",
         entityType: "EXCHANGE_RATE",
         entityId: exchangeRate.id,
-        description: `Exchange rate ${input.baseCurrency}/${input.quoteCurrency} version ${input.version} was created with status ${input.status}.`,
+        description: `Exchange rate ${normalizedInput.baseCurrency}/${normalizedInput.quoteCurrency} version ${input.version} was created with status ${input.status}.`,
         ipAddress: ipAddress ?? null,
         userAgent: userAgent ?? null,
         metadata: {
-          baseCurrency: input.baseCurrency,
-          quoteCurrency: input.quoteCurrency,
+          baseCurrency: normalizedInput.baseCurrency,
+          quoteCurrency: normalizedInput.quoteCurrency,
           version: input.version,
           rate: input.rate,
           status: input.status,
@@ -142,7 +199,24 @@ export const createAdminExchangeRate = async (
     });
 
     return exchangeRate;
-  });
+    });
+  } catch (error) {
+    // A concurrent request can pass the pre-check and hit the unique
+    // constraint. Return a stable conflict instead of a generic 500.
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: unknown }).code === "P2002"
+    ) {
+      throw new AppError(
+        "Exchange rate version already exists for this currency pair",
+        409,
+        ErrorCode.CONFLICT,
+      );
+    }
+    throw error;
+  }
 };
 
 const SAFE_EXCHANGE_RATE_SELECT = {

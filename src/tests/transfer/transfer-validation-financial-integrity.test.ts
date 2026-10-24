@@ -1,3 +1,4 @@
+import { findUnusedCurrencyCode } from "../helpers/unused-currency";
 import request from "supertest";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -597,7 +598,7 @@ describe(
 
             amount: "1000",
 
-            currency: "ZZZ",
+            currency: await findUnusedCurrencyCode(),
           });
 
         // ------------------------------------------------------

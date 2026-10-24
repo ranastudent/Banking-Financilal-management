@@ -1,3 +1,4 @@
+import { findUnusedCurrencyCode } from "../helpers/unused-currency";
 import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import jwt from "jsonwebtoken";
@@ -225,7 +226,7 @@ describe("ADMIN Currency Read Authorization", () => {
     const token = createAccessToken(admin);
 
     const response = await request(app)
-      .get("/api/v1/admin/currencies/ZZZ")
+      .get(`/api/v1/admin/currencies/${await findUnusedCurrencyCode()}`)
       .set("Authorization", `Bearer ${token}`);
 
     expect(response.status).toBe(404);

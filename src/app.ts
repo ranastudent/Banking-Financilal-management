@@ -24,7 +24,12 @@ app.use(express.json({ limit: env.bodySizeLimit }));
 app.use(generalRateLimiter);
 
 app.use("/api/v1", routes);
-app.use("/test-validation", validationTestRouter);
+
+// Diagnostic routes are intentionally unavailable in production. They can
+// expose implementation details or trigger noisy error paths if left public.
+if (env.nodeEnv !== "production") {
+  app.use("/test-validation", validationTestRouter);
+}
 
 app.get("/health", async (req, res) => {
   
@@ -75,17 +80,19 @@ app.get("/ready", async (_req, res) => {
   }
 });
 
-app.get("/test-error", (_req, _res) => {
-  throw new Error("This is a test internal error");
-});
+if (env.nodeEnv !== "production") {
+  app.get("/test-error", (_req, _res) => {
+    throw new Error("This is a test internal error");
+  });
 
-app.get("/test-app-error", (_req, _res) => {
-  throw new AppError(
-    "Account not found",
-    404,
-    ErrorCode.RESOURCE_NOT_FOUND,
-  );
-});
+  app.get("/test-app-error", (_req, _res) => {
+    throw new AppError(
+      "Account not found",
+      404,
+      ErrorCode.RESOURCE_NOT_FOUND,
+    );
+  });
+}
 
 app.use((req, _res, next) => {
   next(

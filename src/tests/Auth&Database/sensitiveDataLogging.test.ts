@@ -55,6 +55,30 @@ describe("Sensitive Data Logging", () => {
     expect(logs).not.toContain("secret");
   });
 
+  it("should omit query-string values from request logs", () => {
+    const req = {
+      method: "GET",
+      path: "/auth/verify-email",
+      originalUrl: "/auth/verify-email?token=super-secret-token&email=user@example.com",
+      requestId: "safe-request-id",
+    } as any;
+
+    const res = {
+      statusCode: 200,
+      on: vi.fn((event: string, callback: () => void) => {
+        if (event === "finish") callback();
+        return res;
+      }),
+    } as any;
+
+    requestLogger(req, res, vi.fn());
+
+    const logs = (console.log as any).mock.calls.flat().map(String).join(" ");
+    expect(logs).toContain("/auth/verify-email");
+    expect(logs).not.toContain("super-secret-token");
+    expect(logs).not.toContain("user@example.com");
+  });
+
   it("should only log safe request metadata", () => {
     const server = http.createServer();
 

@@ -20,6 +20,7 @@ export const generateAccessToken = (
     },
     env.jwtAccessSecret,
     {
+      algorithm: "HS256",
       expiresIn: ACCESS_TOKEN_EXPIRES_IN,
     },
   );
@@ -33,6 +34,7 @@ export const generateRefreshToken = (user: AuthUser): string => {
     },
     env.jwtRefreshSecret,
     {
+      algorithm: "HS256",
       expiresIn: REFRESH_TOKEN_EXPIRES_IN,
     },
   );

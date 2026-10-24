@@ -30,15 +30,15 @@ export const errorHandler = (
 
 
   if (error instanceof ZodError) {
-  return res.status(400).json({
-    success: false,
-    error: {
-      code: "VALIDATION_ERROR",
-      message: "Request validation failed",
-    },
-    requestId,
-  });
-}
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Request validation failed",
+      },
+      requestId,
+    });
+  }
 
   if (error instanceof AppError) {
     return res.status(error.statusCode).json({
@@ -51,10 +51,11 @@ export const errorHandler = (
     });
   }
 
-  console.error("Unexpected error", {
-    requestId,
-    error,
-  });
+  // Never serialize the raw error object: database/driver errors may include
+  // SQL, connection strings, request data, or other sensitive values.
+  const safeErrorName =
+    error instanceof Error ? error.name : "UnknownError";
+  console.error("Unexpected error", { requestId, errorName: safeErrorName });
 
   return res.status(500).json({
     success: false,

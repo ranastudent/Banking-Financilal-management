@@ -49,6 +49,7 @@ export const authenticate = (
     const decoded = jwt.verify(
       token,
       env.jwtAccessSecret,
+      { algorithms: ["HS256"] },
     );
 
     // ----------------------------------------------------------
@@ -78,7 +79,9 @@ export const authenticate = (
       typeof payload.email !== "string" ||
       typeof payload.role !== "string" ||
       typeof payload.status !== "string" ||
-      payload.tokenType !== "access"
+      payload.tokenType !== "access" ||
+      typeof payload.exp !== "number" ||
+      typeof payload.iat !== "number"
     ) {
       throw new AppError(
         "Invalid access token payload",

@@ -1,3 +1,4 @@
+import { findUnusedCurrencyCode } from "../helpers/unused-currency";
 import {
   afterEach,
   beforeEach,
@@ -274,7 +275,7 @@ describe("13.6 Withdrawal Currency Validation", () => {
         account.id,
         {
           amount: "100.00",
-          currency: "ZZZ",
+          currency: await findUnusedCurrencyCode(),
         },
       ),
     ).rejects.toMatchObject({

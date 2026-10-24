@@ -8,11 +8,14 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
-    "postinstall": "prisma skills sync || exit 0",
-    "test": "vitest",
+    "postinstall": "prisma generate",
+    "test": "vitest run",
     "test:run": "vitest run",
     "worker": "node dist/jobs/worker.js",
-    "worker:dev": "tsx src/jobs/worker.ts"
+    "worker:dev": "tsx src/jobs/worker.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:validate": "prisma validate",
+    "test:watch": "vitest"
   },
   "keywords": [
     "banking",

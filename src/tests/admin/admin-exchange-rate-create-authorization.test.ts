@@ -1,3 +1,4 @@
+import { findUnusedCurrencyCode } from "../helpers/unused-currency";
 import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import jwt from "jsonwebtoken";
@@ -357,7 +358,7 @@ describe("ADMIN Exchange Rate Create Authorization", () => {
       .post("/api/v1/admin/exchange-rates")
       .set("Authorization", `Bearer ${token}`)
       .send(
-        validPayload("ZZZ", quoteCurrency.code),
+        validPayload(await findUnusedCurrencyCode(), quoteCurrency.code),
       );
 
     expect(response.status).toBe(404);
@@ -375,7 +376,7 @@ describe("ADMIN Exchange Rate Create Authorization", () => {
       .post("/api/v1/admin/exchange-rates")
       .set("Authorization", `Bearer ${token}`)
       .send(
-        validPayload(baseCurrency.code, "ZZZ"),
+        validPayload(baseCurrency.code, await findUnusedCurrencyCode()),
       );
 
     expect(response.status).toBe(404);

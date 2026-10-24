@@ -1,3 +1,4 @@
+import { findUnusedCurrencyCode } from "../helpers/unused-currency";
 import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import jwt from "jsonwebtoken";
@@ -351,7 +352,7 @@ describe("ADMIN Currency Status Authorization", () => {
     const token = createAccessToken(admin);
 
     const response = await request(app)
-      .patch("/api/v1/admin/currencies/ZZZ/status")
+      .patch(`/api/v1/admin/currencies/${await findUnusedCurrencyCode()}/status`)
       .set("Authorization", `Bearer ${token}`)
       .send({
         isActive: false,

@@ -23,6 +23,7 @@ export const refreshAccessToken = async (
     payload = jwt.verify(
       input.refreshToken,
       env.jwtRefreshSecret,
+      { algorithms: ["HS256"] },
     ) as jwt.JwtPayload;
   } catch {
     throw new AppError(
@@ -34,7 +35,10 @@ export const refreshAccessToken = async (
 
   if (
     payload.tokenType !== "refresh" ||
-    typeof payload.sub !== "string"
+    typeof payload.sub !== "string" ||
+    typeof payload.jti !== "string" ||
+    typeof payload.exp !== "number" ||
+    typeof payload.iat !== "number"
   ) {
     throw new AppError(
       "Invalid refresh token",

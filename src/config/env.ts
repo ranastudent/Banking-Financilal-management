@@ -23,6 +23,66 @@ for (const key of requiredEnv) {
   }
 }
 
+const nodeEnv = process.env.NODE_ENV?.trim() || "development";
+
+// Production must never boot with sample credentials, weak JWT secrets, or
+// an insecure/wildcard browser origin configuration.
+if (nodeEnv === "production") {
+  const accessSecret = process.env.JWT_ACCESS_SECRET!.trim();
+  const refreshSecret = process.env.JWT_REFRESH_SECRET!.trim();
+  const adminPassword = process.env.DEFAULT_ADMIN_PASSWORD!.trim();
+  const origins = process.env.CORS_ORIGINS!
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  const placeholderSecret = (value: string) =>
+    /^(your-|replace-with|change-this|password$|secret$)/i.test(value);
+  const placeholderPassword =
+    /^(change-this|password$|replace-with)/i.test(adminPassword);
+
+  if (
+    accessSecret.length < 32 ||
+    refreshSecret.length < 32 ||
+    placeholderSecret(accessSecret) ||
+    placeholderSecret(refreshSecret) ||
+    placeholderPassword
+  ) {
+    throw new Error(
+      "Production security configuration is invalid: use strong, unique JWT secrets and a non-placeholder admin password",
+    );
+  }
+
+  if (accessSecret === refreshSecret) {
+    throw new Error(
+      "Production security configuration is invalid: access and refresh JWT secrets must differ",
+    );
+  }
+
+  if (adminPassword.length < 12) {
+    throw new Error(
+      "Production security configuration is invalid: DEFAULT_ADMIN_PASSWORD must be at least 12 characters",
+    );
+  }
+
+  if (
+    origins.length === 0 ||
+    origins.includes("*") ||
+    origins.some((origin) => {
+      try {
+        const parsedOrigin = new URL(origin);
+        return parsedOrigin.protocol !== "https:" || parsedOrigin.origin !== origin;
+      } catch {
+        return true;
+      }
+    })
+  ) {
+    throw new Error(
+      "Production security configuration is invalid: CORS_ORIGINS must contain only valid HTTPS origins and must not use a wildcard",
+    );
+  }
+}
+
 const parsePositiveNumber = (
   value: string | undefined,
   fallback: number,
@@ -77,6 +137,7 @@ const parseTimeZone = (
 };
 
 export const env = {
+  nodeEnv,
   // ==========================================
   // SERVER
   // ==========================================

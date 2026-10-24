@@ -1,3 +1,4 @@
+import { findUnusedCurrencyCode } from "../helpers/unused-currency";
 import {
   afterEach,
   beforeEach,
@@ -305,7 +306,7 @@ describe("14.2.5 Currency Validation", () => {
           receiverAccount:
             receiver.accountNumber,
           amount: "100.00",
-          currency: "ZZZ",
+          currency: await findUnusedCurrencyCode(),
         },
       ),
     ).rejects.toMatchObject({
