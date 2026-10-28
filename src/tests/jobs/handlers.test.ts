@@ -5,22 +5,27 @@ const mocks = vi.hoisted(() => ({
   sendEmail: vi.fn(),
   enqueueEmailRecipientJobs: vi.fn(),
   groupBy: vi.fn(),
+  count: vi.fn(),
+  riskUpsert: vi.fn(),
   reportUpsert: vi.fn(),
 }));
 
 vi.mock("../../config/prisma", () => ({
   prisma: {
-    transaction: { findUnique: mocks.findUnique, groupBy: mocks.groupBy },
+    transaction: { findUnique: mocks.findUnique, groupBy: mocks.groupBy, count: mocks.count },
+    riskAnalysis: { upsert: mocks.riskUpsert },
     backgroundReport: { upsert: mocks.reportUpsert },
   },
 }));
 vi.mock("../../utils/mailer", () => ({ sendEmail: mocks.sendEmail }));
 vi.mock("../../jobs/queues", () => ({ enqueueEmailRecipientJobs: mocks.enqueueEmailRecipientJobs }));
 
-import { handleGenerateReport, handleSendEmail } from "../../jobs/handlers";
+import { handleGenerateReport, handleRiskAnalysis, handleSendEmail } from "../../jobs/handlers";
+import { env } from "../../config/env";
 
 const transfer = {
   id: "transaction-1",
+  sourceAccountId: "source-account-1",
   amount: "100.00",
   reference: "TRF-TEST-1",
   currencyCode: "BDT",
@@ -35,6 +40,8 @@ describe("background job handlers", () => {
     mocks.sendEmail.mockResolvedValue(undefined);
     mocks.enqueueEmailRecipientJobs.mockResolvedValue(undefined);
     mocks.groupBy.mockResolvedValue([]);
+    mocks.count.mockResolvedValue(0);
+    mocks.riskUpsert.mockResolvedValue({});
     mocks.reportUpsert.mockResolvedValue({});
   });
 
@@ -54,6 +61,63 @@ describe("background job handlers", () => {
     })).rejects.toThrow("SMTP temporarily unavailable");
     expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
     expect(mocks.sendEmail.mock.calls[0]?.[0]?.to).toBe("sender@example.test");
+  });
+
+  it("stores NORMAL risk when the recent transfer count is below the configured threshold", async () => {
+    const threshold = env.backgroundJobs.riskAnalysis.maxTransfersPerWindow;
+    mocks.count.mockResolvedValue(Math.max(0, threshold - 1));
+
+    await handleRiskAnalysis({
+      outboxEventId: "event-risk-normal",
+      transactionId: "transaction-1",
+      actorUserId: "actor-1",
+    });
+
+    expect(mocks.count).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        sourceAccountId: "source-account-1",
+        type: "INTERNAL_TRANSFER",
+        status: "COMPLETED",
+        createdAt: expect.objectContaining({ gte: expect.any(Date) }),
+      }),
+    }));
+    expect(mocks.riskUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { transactionId: "transaction-1" },
+      create: expect.objectContaining({
+        transactionId: "transaction-1",
+        riskLevel: "NORMAL",
+        reasons: [],
+      }),
+      update: expect.objectContaining({
+        riskLevel: "NORMAL",
+        reasons: [],
+      }),
+    }));
+  });
+
+  it("flags risk for review when the recent transfer count reaches the configured threshold", async () => {
+    const threshold = env.backgroundJobs.riskAnalysis.maxTransfersPerWindow;
+    mocks.count.mockResolvedValue(threshold);
+
+    await handleRiskAnalysis({
+      outboxEventId: "event-risk-review",
+      transactionId: "transaction-1",
+      actorUserId: "actor-1",
+    });
+
+    expect(mocks.riskUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { transactionId: "transaction-1" },
+      create: expect.objectContaining({
+        transactionId: "transaction-1",
+        riskLevel: "REVIEW",
+        reasons: expect.arrayContaining([
+          expect.stringContaining(String(threshold)),
+        ]),
+      }),
+      update: expect.objectContaining({
+        riskLevel: "REVIEW",
+      }),
+    }));
   });
 
   it("uses the scheduled occurrence timestamp to determine the report period", async () => {
