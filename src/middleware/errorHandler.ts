@@ -54,8 +54,23 @@ export const errorHandler = (
   // Never serialize the raw error object: database/driver errors may include
   // SQL, connection strings, request data, or other sensitive values.
   const safeErrorName =
-    error instanceof Error ? error.name : "UnknownError";
-  console.error("Unexpected error", { requestId, errorName: safeErrorName });
+  error instanceof Error ? error.name : "UnknownError";
+
+  if (process.env.NODE_ENV !== "production") {
+    console.error("Unexpected error", {
+      requestId,
+      errorName: safeErrorName,
+      errorMessage:
+        error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+  } else {
+    // Avoid exposing internal error details in production logs.
+    console.error("Unexpected error", {
+      requestId,
+      errorName: safeErrorName,
+    });
+  }
 
   return res.status(500).json({
     success: false,

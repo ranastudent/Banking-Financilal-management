@@ -12,6 +12,7 @@ import { corsMiddleware } from "./config/cors";
 import { generalRateLimiter } from "./middleware/rateLimiter";
 import { env } from "./config/env";
 import routes from "./routes";
+import { openApiSpec, swaggerUiMiddleware } from "./docs/swagger";
 
 
 const app = express();
@@ -24,6 +25,13 @@ app.use(express.json({ limit: env.bodySizeLimit }));
 app.use(generalRateLimiter);
 
 app.use("/api/v1", routes);
+
+// Interactive OpenAPI/Swagger UI is available only outside production.
+// Open http://localhost:<PORT>/api-docs to explore the documented API.
+if (env.nodeEnv !== "production") {
+  app.use("/api-docs", swaggerUiMiddleware.serve, swaggerUiMiddleware.setup(openApiSpec));
+  app.get("/api-docs.json", (_req, res) => res.json(openApiSpec));
+}
 
 // Diagnostic routes are intentionally unavailable in production. They can
 // expose implementation details or trigger noisy error paths if left public.
