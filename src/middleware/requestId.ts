@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { randomUUID } from "crypto";
+import { logger } from "../observability/logger";
 
 export const requestIdMiddleware = (
   req: Request,
@@ -20,9 +21,11 @@ export const requestIdMiddleware = (
 
   res.setHeader("X-Request-ID", requestId);
 
-  console.log(
-    `[Request ID] ${req.method} ${safePath} requestId=${requestId}`,
-  );
+  logger.info("http.request.started", {
+    requestId,
+    method: req.method,
+    endpoint: safePath,
+  });
 
   next();
 };

@@ -1,3 +1,4 @@
+import "../setup";
 import { describe, expect, it, afterAll } from "vitest";
 
 import { Prisma } from "@prisma/client";

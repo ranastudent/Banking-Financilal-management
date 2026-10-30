@@ -1,3 +1,4 @@
+import "../setup";
 import { describe, expect, it } from "vitest";
 
 import { depositSchema } from "../../account/schemas/deposit.schema";

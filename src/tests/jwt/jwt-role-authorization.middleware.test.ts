@@ -1,3 +1,4 @@
+import "../setup";
 import { describe, expect, it, vi } from "vitest";
 
 import { authorize } from "../../middleware/authorize";

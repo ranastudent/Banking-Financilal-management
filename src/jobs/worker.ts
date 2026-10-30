@@ -23,6 +23,8 @@ import type {
   TransferCommittedPayload,
 } from "./types";
 import { isNotificationEventPayload, isTransferCommittedPayload } from "./types";
+import { logger } from "../observability/logger";
+import { recordQueueFailure } from "../observability/metrics";
 
 let workerConnection: ReturnType<typeof createBullMqConnection> | null = null;
 let worker: Worker<BackgroundJobData, void, BackgroundJobName> | null = null;
@@ -90,9 +92,22 @@ const start = async (): Promise<void> => {
   if (shuttingDown) return;
   worker = createWorker();
   worker.on("failed", (job, error) => {
-    console.error("[background-worker] job failed", { jobId: job?.id, name: job?.name, attemptsMade: job?.attemptsMade, error: error.message });
+    const configuredAttempts = job?.opts.attempts ?? 1;
+    const finalFailure = !job || job.attemptsMade >= configuredAttempts;
+    if (finalFailure) recordQueueFailure();
+    logger.error("background.job.failed", {
+      jobId: job?.id,
+      jobName: job?.name,
+      attemptsMade: job?.attemptsMade,
+      finalFailure,
+      errorName: error.name,
+      errorMessage: process.env.NODE_ENV === "production" ? undefined : error.message,
+    });
   });
-  worker.on("error", (error) => console.error("[background-worker] worker error", error));
+  worker.on("error", (error) => logger.error("background.worker.error", {
+    errorName: error.name,
+    errorMessage: process.env.NODE_ENV === "production" ? undefined : error.message,
+  }));
   await worker.waitUntilReady();
   if (shuttingDown) return;
   await scheduleDailyReport();

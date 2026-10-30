@@ -1,3 +1,4 @@
+import "../setup";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createClient } from "redis";
 import { env } from "../../config/env";

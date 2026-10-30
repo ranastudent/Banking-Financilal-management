@@ -1,3 +1,4 @@
+import "../setup";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 

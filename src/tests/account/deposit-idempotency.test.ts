@@ -1,3 +1,4 @@
+import "../setup";
 import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { Prisma, UserRole, UserStatus } from "@prisma/client";

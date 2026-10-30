@@ -11,6 +11,8 @@ import {
 import {
   clearIdempotencyRecord,
 } from "../../middleware/idempotency.middleware";
+import { recordTransferResult } from "../../observability/metrics";
+import { logger } from "../../observability/logger";
 
 export const transferAuthorizationController = async (
   req: Request,
@@ -131,6 +133,13 @@ export const processTransfer = async (
       },
     );
   } catch (error) {
+    recordTransferResult(false);
+    logger.warn("transfer.failed", {
+      requestId: req.requestId,
+      userId: req.user.id,
+      endpoint: req.route?.path ? `${req.baseUrl}${req.route.path}` : req.path,
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
     /*
      * Preserve the existing cleanup behavior.
      *
@@ -143,6 +152,13 @@ export const processTransfer = async (
     await clearIdempotencyRecord(res);
     throw error;
   }
+
+  recordTransferResult(true);
+  logger.info("transfer.succeeded", {
+    requestId: req.requestId,
+    userId: req.user.id,
+    transactionId: result.transaction.id,
+  });
 
   const responseData = {
     message: "Fund transfer completed successfully",

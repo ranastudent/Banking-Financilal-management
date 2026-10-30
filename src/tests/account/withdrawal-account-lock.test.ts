@@ -1,3 +1,4 @@
+import "../setup";
 import { Client } from "pg";
 
 import {

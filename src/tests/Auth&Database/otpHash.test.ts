@@ -1,3 +1,4 @@
+import "../setup";
 import { describe, expect, it } from "vitest";
 
 import { hashOtp, compareOtp } from "../../auth/utils/otpHash";

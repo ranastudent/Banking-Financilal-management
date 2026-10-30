@@ -1,3 +1,4 @@
+import "../setup";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Request, Response } from "express";
 

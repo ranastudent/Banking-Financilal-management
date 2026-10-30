@@ -1,3 +1,4 @@
+import "../setup";
 import { afterEach, describe, expect, it } from "vitest";
 import { Prisma, UserRole, UserStatus } from "@prisma/client";
 

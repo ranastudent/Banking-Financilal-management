@@ -1,3 +1,4 @@
+import "../setup";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { prisma } from "../../config/prisma";

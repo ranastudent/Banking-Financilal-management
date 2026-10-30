@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from "express";
 import { AppError } from "../errors/AppError";
 import { ErrorCode } from "../errors/errorCodes";
 import { ZodError } from "zod";
+import { logger } from "../observability/logger";
+import { recordDatabaseError } from "../observability/metrics";
 
 export const errorHandler = (
   error: unknown,
@@ -53,24 +55,31 @@ export const errorHandler = (
 
   // Never serialize the raw error object: database/driver errors may include
   // SQL, connection strings, request data, or other sensitive values.
-  const safeErrorName =
-  error instanceof Error ? error.name : "UnknownError";
+  const safeErrorName = error instanceof Error ? error.name : "UnknownError";
+  const safeErrorCode =
+    error && typeof error === "object" && "code" in error && typeof error.code === "string"
+      ? error.code
+      : undefined;
+  const isDatabaseError =
+    safeErrorName.toLowerCase().includes("prisma") ||
+    safeErrorName.toLowerCase().includes("database") ||
+    Boolean(safeErrorCode && /^P\d{4}$/.test(safeErrorCode));
 
-  if (process.env.NODE_ENV !== "production") {
-    console.error("Unexpected error", {
-      requestId,
-      errorName: safeErrorName,
-      errorMessage:
-        error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
-  } else {
-    // Avoid exposing internal error details in production logs.
-    console.error("Unexpected error", {
-      requestId,
-      errorName: safeErrorName,
-    });
-  }
+  if (isDatabaseError) recordDatabaseError();
+
+  logger.error("http.request.failed", {
+    requestId,
+    userId: req.user?.id ?? null,
+    method: req.method,
+    endpoint: req.route?.path ? `${req.baseUrl}${req.route.path}` : req.path,
+    errorName: safeErrorName,
+    errorCode: safeErrorCode,
+    category: isDatabaseError ? "database" : "application",
+    // Detailed stack traces are development-only; never return them to clients.
+    ...(process.env.NODE_ENV !== "production"
+      ? { errorMessage: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined }
+      : {}),
+  });
 
   return res.status(500).json({
     success: false,

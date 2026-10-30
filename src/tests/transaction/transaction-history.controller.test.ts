@@ -1,3 +1,4 @@
+import "../setup";
 import type { Request, Response } from "express";
 
 import {

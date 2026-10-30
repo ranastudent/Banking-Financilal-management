@@ -1,3 +1,4 @@
+import "../setup";
 import { findUnusedCurrencyCode } from "../helpers/unused-currency";
 import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";

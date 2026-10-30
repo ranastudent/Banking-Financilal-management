@@ -13,6 +13,7 @@ import { generalRateLimiter } from "./middleware/rateLimiter";
 import { env } from "./config/env";
 import routes from "./routes";
 import { openApiSpec, swaggerUiMiddleware } from "./docs/swagger";
+import { metricsHandler } from "./observability/metrics";
 
 
 const app = express();
@@ -72,6 +73,12 @@ app.get("/health", async (req, res) => {
     requestId: req.requestId,
   });
 });
+
+// Metrics are intentionally exposed only outside production until an
+// authenticated/internal-network access policy is configured for deployment.
+if (env.nodeEnv !== "production") {
+  app.get("/metrics", metricsHandler);
+}
 
 app.get("/ready", async (_req, res) => {
   try {

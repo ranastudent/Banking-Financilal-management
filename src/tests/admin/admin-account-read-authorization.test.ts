@@ -1,3 +1,4 @@
+import "../setup";
 import request from "supertest";
 import { describe, expect, afterEach, it } from "vitest";
 import jwt from "jsonwebtoken";

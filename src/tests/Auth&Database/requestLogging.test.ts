@@ -1,36 +1,46 @@
+import "../setup";
 import request from "supertest";
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import app from "../../app";
 
 describe("Request Logger", () => {
-  it("should log request information after the response finishes", async () => {
-    const consoleSpy = vi
-      .spyOn(console, "log")
-      .mockImplementation(() => {});
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
-    await request(app).get("/health");
+  it("writes structured JSON request information after the response finishes", async () => {
+    const consoleSpy = vi.spyOn(console, "info").mockImplementation(() => {});
 
-    const logs = consoleSpy.mock.calls.map((call) => call[0]);
+    const response = await request(app).get("/health");
 
-    const requestLog = logs.find(
-      (log) =>
-        typeof log === "string" &&
-        log.includes("[Request] GET /health") &&
-        log.includes("status="),
+    const logRecords = consoleSpy.mock.calls
+      .map((call) => call[0])
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => {
+        try {
+          return JSON.parse(value) as Record<string, unknown>;
+        } catch {
+          return null;
+        }
+      })
+      .filter((value): value is Record<string, unknown> => value !== null);
+
+    const requestLog = logRecords.find(
+      (record) => record.event === "http.request.completed",
     );
 
+    expect(response.status).toBe(200);
     expect(requestLog).toBeDefined();
-
-    expect(requestLog).toMatch(
-      /\[Request\] GET \/health requestId=[a-f0-9-]+/,
-    );
-
-    expect(requestLog).toMatch(/status=\d+/);
-    expect(requestLog).toMatch(/duration=\d+\.\d+ms/);
-    expect(requestLog).toMatch(
-      /timestamp=\d{4}-\d{2}-\d{2}T/,
-    );
-
-    consoleSpy.mockRestore();
+    expect(requestLog).toMatchObject({
+      level: "info",
+      event: "http.request.completed",
+      method: "GET",
+      endpoint: "/health",
+      status: 200,
+      requestId: expect.any(String),
+      startedAt: expect.any(String),
+      latencyMs: expect.any(Number),
+    });
+    expect(requestLog?.timestamp).toEqual(expect.any(String));
   });
 });

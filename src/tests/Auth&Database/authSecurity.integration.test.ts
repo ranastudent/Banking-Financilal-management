@@ -1,3 +1,4 @@
+import "../setup";
 import {
   beforeEach,
   describe,

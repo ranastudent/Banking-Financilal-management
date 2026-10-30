@@ -1,3 +1,4 @@
+import "../setup";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ add: vi.fn(), close: vi.fn(), quit: vi.fn() }));

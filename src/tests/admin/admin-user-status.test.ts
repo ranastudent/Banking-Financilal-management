@@ -1,3 +1,4 @@
+import "../setup";
 import crypto from "node:crypto";
 
 import request from "supertest";
