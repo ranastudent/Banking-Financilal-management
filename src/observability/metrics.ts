@@ -15,6 +15,10 @@ let transferSuccesses = 0;
 let transferFailures = 0;
 let queueFailures = 0;
 let databaseErrors = 0;
+let riskAssessments = 0;
+let riskHolds = 0;
+let riskApprovals = 0;
+let riskRejections = 0;
 
 const labelValue = (value: string): string =>
   value
@@ -83,6 +87,16 @@ export const recordDatabaseError = (): void => {
   databaseErrors += 1;
 };
 
+export const recordRiskAssessment = (decision: "APPROVE" | "HOLD"): void => {
+  riskAssessments += 1;
+  if (decision === "HOLD") riskHolds += 1;
+};
+
+export const recordRiskReview = (decision: "APPROVED" | "REJECTED"): void => {
+  if (decision === "APPROVED") riskApprovals += 1;
+  else riskRejections += 1;
+};
+
 export const metricsHandler = (
   _req: Request,
   res: Response,
@@ -127,6 +141,19 @@ export const metricsHandler = (
     "# HELP banking_queue_failures_total Background queue jobs that failed.",
     "# TYPE banking_queue_failures_total counter",
     `banking_queue_failures_total ${queueFailures}`,
+
+    "# HELP banking_risk_assessments_total Transfer risk assessments observed.",
+    "# TYPE banking_risk_assessments_total counter",
+    `banking_risk_assessments_total ${riskAssessments}`,
+    "# HELP banking_risk_holds_total Transfers placed on risk hold.",
+    "# TYPE banking_risk_holds_total counter",
+    `banking_risk_holds_total ${riskHolds}`,
+    "# HELP banking_risk_reviews_approved_total Risk holds approved by administrators.",
+    "# TYPE banking_risk_reviews_approved_total counter",
+    `banking_risk_reviews_approved_total ${riskApprovals}`,
+    "# HELP banking_risk_reviews_rejected_total Risk holds rejected by administrators.",
+    "# TYPE banking_risk_reviews_rejected_total counter",
+    `banking_risk_reviews_rejected_total ${riskRejections}`,
 
     "# HELP banking_database_errors_total Database-related errors observed.",
     "# TYPE banking_database_errors_total counter",

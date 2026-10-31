@@ -1,8 +1,19 @@
 import "dotenv/config";
 
+const nodeEnv = process.env.NODE_ENV?.trim() || "development";
+
 const requiredEnv = [
   "DATABASE_URL",
   "REDIS_URL",
+  ...(nodeEnv === "test"
+    ? [
+        "TEST_DATABASE_NAME",
+        "TEST_DATABASE_HOST",
+        "TEST_REDIS_HOST",
+        "PRODUCTION_DATABASE_HOST",
+        "PRODUCTION_REDIS_HOST",
+      ]
+    : []),
   "JWT_ACCESS_SECRET",
   "JWT_REFRESH_SECRET",
   "DEFAULT_ADMIN_EMAIL",
@@ -23,7 +34,51 @@ for (const key of requiredEnv) {
   }
 }
 
-const nodeEnv = process.env.NODE_ENV?.trim() || "development";
+const databaseUrl = process.env.DATABASE_URL!.trim();
+const redisUrl = process.env.REDIS_URL!.trim();
+
+const getUrlHost = (value: string, name: string): string => {
+  try {
+    return new URL(value).hostname.toLowerCase();
+  } catch {
+    throw new Error(`Invalid URL in environment variable: ${name}`);
+  }
+};
+
+if (nodeEnv === "test") {
+  const expectedDatabaseHost = process.env.TEST_DATABASE_HOST!.trim().toLowerCase();
+  const expectedRedisHost = process.env.TEST_REDIS_HOST!.trim().toLowerCase();
+  const productionDatabaseHost = process.env.PRODUCTION_DATABASE_HOST!.trim().toLowerCase();
+  const productionRedisHost = process.env.PRODUCTION_REDIS_HOST!.trim().toLowerCase();
+
+  if (!expectedDatabaseHost || !expectedRedisHost) {
+    throw new Error("Test environment requires explicit TEST_DATABASE_HOST and TEST_REDIS_HOST values");
+  }
+
+  if (
+    getUrlHost(databaseUrl, "DATABASE_URL") !== expectedDatabaseHost ||
+    getUrlHost(redisUrl, "REDIS_URL") !== expectedRedisHost
+  ) {
+    throw new Error("Test environment safety check failed: DATABASE_URL or REDIS_URL does not match the explicitly approved test hosts");
+  }
+
+  if (
+    expectedDatabaseHost === productionDatabaseHost ||
+    expectedRedisHost === productionRedisHost
+  ) {
+    throw new Error("Test environment safety check failed: test and production hosts must be different");
+  }
+
+  const configuredDatabaseName = decodeURIComponent(
+    new URL(databaseUrl).pathname.replace(/^\//, ""),
+  );
+
+  if (!configuredDatabaseName || configuredDatabaseName !== process.env.TEST_DATABASE_NAME!.trim()) {
+    throw new Error(
+      "Test environment safety check failed: DATABASE_URL database name does not match TEST_DATABASE_NAME.",
+    );
+  }
+}
 
 // Production must never boot with sample credentials, weak JWT secrets, or
 // an insecure/wildcard browser origin configuration.
@@ -153,15 +208,17 @@ export const env = {
   // ==========================================
 
   // Keep this because existing project code uses env.databaseUrl
-  databaseUrl: process.env.DATABASE_URL!,
+  databaseUrl,
 
   database: {
-    url: process.env.DATABASE_URL!,
+    url: databaseUrl,
 
     pool: {
+      // Keep the test pool smaller to reduce connection pressure on Neon
+      // during the sequential integration-test suite. Production retains 10.
       max: parsePositiveNumber(
         process.env.DATABASE_POOL_MAX,
-        10,
+        nodeEnv === "test" ? 5 : 10,
         "DATABASE_POOL_MAX",
       ),
     },
@@ -185,7 +242,13 @@ export const env = {
   // REDIS
   // ==========================================
 
-  redisUrl: process.env.REDIS_URL!,
+  redisUrl,
+
+  test: {
+    databaseName: nodeEnv === "test" ? process.env.TEST_DATABASE_NAME!.trim() : undefined,
+    databaseHost: nodeEnv === "test" ? process.env.TEST_DATABASE_HOST!.trim().toLowerCase() : undefined,
+    redisHost: nodeEnv === "test" ? process.env.TEST_REDIS_HOST!.trim().toLowerCase() : undefined,
+  },
 
   // ==========================================
   // JWT

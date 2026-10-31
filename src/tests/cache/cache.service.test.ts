@@ -1,4 +1,4 @@
-import "../setup";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { redisMock, values, sets } = vi.hoisted(() => {

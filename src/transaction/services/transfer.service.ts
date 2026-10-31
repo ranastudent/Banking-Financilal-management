@@ -10,6 +10,9 @@ import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
 import type { AuthUser } from "../../types/auth";
 import type { TransferInput } from "../schemas/transfer.schema";
+import { assessTransferRisk } from "../../risk/services/risk-assessment.service";
+import { recordRiskAssessment } from "../../observability/metrics";
+import type { RiskAssessment } from "../../risk/risk.types";
 import { getTransferAuthorizedAccounts } from "../policies/transfer.policy";
 import { assertTransferAmountWithinLimits } from "../policies/transaction-limits.policy";
 import { assertDailyTransferLimit } from "./transaction-limits.service";
@@ -251,11 +254,18 @@ const updateBalance = async (
 
 /* Main transfer */
 
+export interface TransferRiskApproval {
+  heldTransactionId: string;
+  reviewerId: string;
+  comment?: string;
+}
+
 export const prepareTransfer = async (
   user: AuthUser,
   input: TransferInput,
   idempotencyRecordId?: string,
   auditContext: AuditContext = {},
+  riskApproval?: TransferRiskApproval,
 ) => {
   const amount = new Prisma.Decimal(input.amount);
   assertTransferAmountWithinLimits(amount);
@@ -423,6 +433,117 @@ export const prepareTransfer = async (
       409,
       ErrorCode.CONFLICT,
     );
+  }
+
+  let riskAssessment: RiskAssessment | null = null;
+
+  if (!riskApproval) {
+    riskAssessment = await assessTransferRisk({
+      userId: user.id,
+      senderAccountId: preflightSender.id,
+      receiverAccountId: preflightReceiver.id,
+      receiverAccountNumber: preflightReceiver.account_number,
+      transfer: input,
+    });
+    recordRiskAssessment(riskAssessment.decision);
+
+    if (riskAssessment.decision === "HOLD") {
+      const held = await prisma.$transaction(async (tx) => {
+        const transaction = await tx.transaction.create({
+          data: {
+            reference: `TRF-HOLD-${randomUUID()}`,
+            type: "INTERNAL_TRANSFER",
+            status: "ON_HOLD",
+            amount,
+            currencyCode: currency.code,
+            sourceAccountId: preflightSender.id,
+            destinationAccountId: preflightReceiver.id,
+            provider: "INTERNAL",
+            metadata: {
+              operation: "INTERNAL_FUND_TRANSFER",
+              riskHold: true,
+              requestedByUserId: user.id,
+            },
+          },
+          select: {
+            id: true, reference: true, type: true, status: true, amount: true,
+            currencyCode: true, sourceAccountId: true, destinationAccountId: true,
+            provider: true, createdAt: true,
+          },
+        });
+
+        await tx.riskAnalysis.create({
+          data: {
+            transactionId: transaction.id,
+            riskScore: riskAssessment!.score,
+            riskLevel: riskAssessment!.level,
+            decision: riskAssessment!.decision,
+            reviewStatus: "PENDING",
+            reasons: riskAssessment!.reasons as unknown as Prisma.InputJsonValue,
+            engineVersion: riskAssessment!.engineVersion,
+          },
+        });
+
+        await writeAuditLog({
+          userId: user.id,
+          action: "TRANSFER_HELD_FOR_RISK_REVIEW",
+          resource: "TRANSACTION",
+          resourceId: transaction.id,
+          description: `Transfer ${transaction.reference} was held for manual risk review.`,
+          ...auditContext,
+          metadata: {
+            riskScore: riskAssessment!.score,
+            riskLevel: riskAssessment!.level,
+            reasons: riskAssessment!.reasons,
+            senderAccount: input.senderAccount,
+            receiverAccount: input.receiverAccount,
+            amount: amount.toString(),
+            currencyCode: currency.code,
+          },
+        }, tx);
+
+        if (idempotencyRecordId) {
+          const completion = await tx.idempotencyRecord.updateMany({
+            where: { id: idempotencyRecordId, userId: user.id, responseStatus: null },
+            data: {
+              responseStatus: 202,
+              responseBody: {
+                message: "Transfer is on hold pending risk review",
+                transaction: { id: transaction.id, reference: transaction.reference, status: "ON_HOLD" },
+              },
+            },
+          });
+          if (completion.count !== 1) {
+            throw new AppError("Unable to complete idempotency record", 409, ErrorCode.CONFLICT);
+          }
+        }
+
+        await tx.outboxEvent.create({
+          data: {
+            eventType: "NOTIFICATION_REQUESTED",
+            payload: {
+              userId: user.id,
+              notificationType: "SECURITY_ALERT",
+              title: "Transfer under review",
+              message: "Your transfer is temporarily on hold for a security review. No money has been moved.",
+              metadata: { transactionId: transaction.id, reference: transaction.reference },
+            },
+          },
+        });
+
+        return transaction;
+      });
+
+      return {
+        held: true as const,
+        transaction: { ...held, amount: held.amount.toString() },
+        risk: riskAssessment,
+        senderAccount: input.senderAccount,
+        receiverAccount: input.receiverAccount,
+        amount: amount.toString(),
+        currency: currency.code,
+      };
+    }
   }
 
   const transactionCallStart = performance.now();
@@ -630,6 +751,34 @@ export const prepareTransfer = async (
         });
 
         /*
+         * Admin approval is bound to the original held transaction. Lock and
+         * verify it in this same financial transaction so duplicate reviews
+         * cannot execute the transfer twice.
+         */
+        if (riskApproval) {
+          const heldRows = await tx.$queryRaw<Array<{ id: string; status: string }>>`
+            SELECT id, status FROM transactions WHERE id = ${riskApproval.heldTransactionId} FOR UPDATE
+          `;
+          if (!heldRows[0] || heldRows[0].status !== "ON_HOLD") {
+            throw new AppError("Held transfer is no longer pending review", 409, ErrorCode.CONFLICT);
+          }
+          const heldDetails = await tx.transaction.findUnique({
+            where: { id: riskApproval.heldTransactionId },
+            select: { sourceAccountId: true, destinationAccountId: true, amount: true, currencyCode: true, riskAnalysis: { select: { reviewStatus: true } } },
+          });
+          if (
+            !heldDetails ||
+            heldDetails.sourceAccountId !== sender.id ||
+            heldDetails.destinationAccountId !== receiver.id ||
+            !heldDetails.amount.equals(amount) ||
+            heldDetails.currencyCode !== currency.code ||
+            heldDetails.riskAnalysis?.reviewStatus !== "PENDING"
+          ) {
+            throw new AppError("Approved transfer details do not match the held transfer", 409, ErrorCode.CONFLICT);
+          }
+        }
+
+        /*
          * 6. Authoritative balance check
          */
 
@@ -745,6 +894,20 @@ export const prepareTransfer = async (
         throwIfTransferTestFailure(
           "AFTER_TRANSACTION_CREATION",
         );
+
+        if (riskAssessment) {
+          await tx.riskAnalysis.create({
+            data: {
+              transactionId: transaction.id,
+              riskScore: riskAssessment.score,
+              riskLevel: riskAssessment.level,
+              decision: riskAssessment.decision,
+              reviewStatus: "NOT_REQUIRED",
+              reasons: riskAssessment.reasons as unknown as Prisma.InputJsonValue,
+              engineVersion: riskAssessment.engineVersion,
+            },
+          });
+        }
 
         /* 9. Ledger entries */
 
@@ -1015,6 +1178,35 @@ export const prepareTransfer = async (
           throwIfTransferTestFailure(
                "AFTER_IDEMPOTENCY_COMPLETION",
           );
+        }
+
+        if (riskApproval) {
+          await tx.transaction.update({
+            where: { id: riskApproval.heldTransactionId },
+            data: { status: "CANCELLED" },
+          });
+          const heldRisk = await tx.riskAnalysis.update({
+            where: { transactionId: riskApproval.heldTransactionId },
+            data: { reviewStatus: "APPROVED" },
+          });
+          await tx.riskReview.create({
+            data: {
+              riskAnalysisId: heldRisk.id,
+              reviewerId: riskApproval.reviewerId,
+              decision: "APPROVED",
+              ...(riskApproval.comment !== undefined ? { comment: riskApproval.comment } : {}),
+              ...(auditContext.requestId !== undefined ? { requestId: auditContext.requestId } : {}),
+            },
+          });
+          await writeAuditLog({
+            userId: riskApproval.reviewerId,
+            action: "RISK_TRANSFER_APPROVED",
+            resource: "TRANSACTION",
+            resourceId: riskApproval.heldTransactionId,
+            description: `Held transfer approved and executed as ${transaction.reference}.`,
+            ...auditContext,
+            metadata: { executedTransactionId: transaction.id, comment: riskApproval.comment ?? null },
+          }, tx);
         }
 
         /*

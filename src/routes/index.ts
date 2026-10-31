@@ -29,6 +29,7 @@ import userRoutes from "../user/routes/user.routes";
 import accountRoutes from "../account/routes/account.routes";
 import transferRoutes from "../transaction/routes/transfer.routes";
 import notificationRoutes from "../notifications/routes/notification.routes";
+import riskReviewRoutes from "../risk/routes/risk-review.routes";
 
 const router = Router();
 
@@ -62,5 +63,6 @@ router.use("/auditor/fx-requests", auditorFxRequestRoutes,);
 router.use("/users", userRoutes);
 router.use("/accounts", accountRoutes);
 router.use("/notifications", notificationRoutes);
+router.use("/admin/risk-reviews", riskReviewRoutes);
 
 export default router;

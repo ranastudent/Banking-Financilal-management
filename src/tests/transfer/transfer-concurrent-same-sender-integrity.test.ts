@@ -38,7 +38,14 @@ afterEach(async () => {
       },
     });
 
-    await prisma.transaction.deleteMany({
+    await prisma.riskReview.deleteMany({
+        where: { riskAnalysis: { is: { transactionId: { in: transactionIds } } } },
+      });
+      await prisma.riskAnalysis.deleteMany({
+        where: { transactionId: { in: transactionIds } },
+      });
+
+      await prisma.transaction.deleteMany({
       where: {
         id: { in: transactionIds },
       },

@@ -143,6 +143,24 @@ afterEach(async () => {
     const ids = [...createdTransactionIds];
     createdTransactionIds.length = 0;
 
+    // Use the captured IDs after clearing the shared tracking array.
+    // Risk records must be deleted before their parent transactions.
+    await prisma.riskReview.deleteMany({
+      where: {
+        riskAnalysis: {
+          is: {
+            transactionId: { in: ids },
+          },
+        },
+      },
+    });
+
+    await prisma.riskAnalysis.deleteMany({
+      where: {
+        transactionId: { in: ids },
+      },
+    });
+
     await prisma.transaction.deleteMany({
       where: {
         id: {

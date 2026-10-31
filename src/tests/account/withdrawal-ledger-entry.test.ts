@@ -38,6 +38,13 @@ describe("13.12 Withdrawal Ledger Entry", () => {
     }
 
     if (createdTransactionIds.length > 0) {
+      await prisma.riskReview.deleteMany({
+        where: { riskAnalysis: { is: { transactionId: { in: createdTransactionIds } } } },
+      });
+      await prisma.riskAnalysis.deleteMany({
+        where: { transactionId: { in: createdTransactionIds } },
+      });
+
       await prisma.transaction.deleteMany({
         where: {
           id: {

@@ -49,6 +49,13 @@ describe("14.2.2 Receiver Account Validation", () => {
       /*
        * Finally delete transactions.
        */
+      await prisma.riskReview.deleteMany({
+        where: { riskAnalysis: { is: { transactionId: { in: createdTransactionIds } } } },
+      });
+      await prisma.riskAnalysis.deleteMany({
+        where: { transactionId: { in: createdTransactionIds } },
+      });
+
       await prisma.transaction.deleteMany({
         where: {
           id: {

@@ -49,6 +49,13 @@ describe("14.2.3 Sender Ownership / Authorization", () => {
       /*
        * Delete transactions after dependent records.
        */
+      await prisma.riskReview.deleteMany({
+        where: { riskAnalysis: { is: { transactionId: { in: createdTransactionIds } } } },
+      });
+      await prisma.riskAnalysis.deleteMany({
+        where: { transactionId: { in: createdTransactionIds } },
+      });
+
       await prisma.transaction.deleteMany({
         where: {
           id: {

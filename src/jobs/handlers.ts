@@ -3,7 +3,11 @@ import { prisma } from "../config/prisma";
 import { sendEmail } from "../utils/mailer";
 import { env } from "../config/env";
 import { enqueueEmailRecipientJobs } from "./queues";
-import type { NotificationEventPayload, ReportJobPayload, TransferCommittedPayload } from "./types";
+import type {
+  NotificationEventPayload,
+  ReportJobPayload,
+  TransferCommittedPayload,
+} from "./types";
 
 const getTransfer = async (transactionId: string) => {
   const transaction = await prisma.transaction.findUnique({
@@ -34,6 +38,7 @@ const escapeHtml = (value: string): string =>
       '"': "&quot;",
       "'": "&#39;",
     };
+
     return replacements[character] ?? character;
   });
 
@@ -41,6 +46,7 @@ export const handleSendEmail = async (
   payload: TransferCommittedPayload,
 ): Promise<void> => {
   const transaction = await getTransfer(payload.transactionId);
+
   const recipientMap = new Map<
     string,
     NonNullable<typeof transaction.sourceAccount>["user"]
@@ -52,25 +58,37 @@ export const handleSendEmail = async (
   ];
 
   for (const user of candidateUsers) {
-    if (user) recipientMap.set(user.email, user);
+    if (user) {
+      recipientMap.set(user.email, user);
+    }
   }
 
   if (!payload.recipientUserId) {
     // Fan out into independent recipient jobs. If recipient B fails, recipient
     // A's completed job is not re-run when the dispatcher retries.
-    await enqueueEmailRecipientJobs(payload, [...recipientMap.values()].map((user) => user.id));
+    await enqueueEmailRecipientJobs(
+      payload,
+      [...recipientMap.values()].map((user) => user.id),
+    );
+
     return;
   }
 
-  const user = [...recipientMap.values()].find((candidate) => candidate.id === payload.recipientUserId);
+  const user = [...recipientMap.values()].find(
+    (candidate) => candidate.id === payload.recipientUserId,
+  );
+
   if (!user) {
-    throw new Error(`Email recipient ${payload.recipientUserId} is not associated with transfer ${transaction.id}`);
+    throw new Error(
+      `Email recipient ${payload.recipientUserId} is not associated with transfer ${transaction.id}`,
+    );
   }
 
   const amount = transaction.amount.toString();
   const reference = escapeHtml(transaction.reference);
   const currency = escapeHtml(transaction.currencyCode);
   const safeAmount = escapeHtml(amount);
+
   await sendEmail({
     to: user.email,
     subject: `Transfer confirmation ${transaction.reference}`,
@@ -105,11 +123,14 @@ export const handleSendNotification = async (
   ].filter(
     (item, index, all): item is { userId: string; role: string } =>
       Boolean(item.userId) &&
-      all.findIndex((candidate) => candidate.userId === item.userId) === index,
+      all.findIndex(
+        (candidate) => candidate.userId === item.userId,
+      ) === index,
   );
 
   for (const item of users) {
     const isSender = item.role === "sender";
+
     const message = isSender
       ? `Your transfer of ${amount} ${transaction.currencyCode} was completed. Reference: ${transaction.reference}.`
       : `You received a transfer of ${amount} ${transaction.currencyCode}. Reference: ${transaction.reference}.`;
@@ -143,7 +164,9 @@ export const handleSendNotificationEvent = async (
   payload: NotificationEventPayload,
 ): Promise<void> => {
   if (!payload.userId || !payload.outboxEventId) {
-    throw new Error("Notification event is missing its user or outbox event ID");
+    throw new Error(
+      "Notification event is missing its user or outbox event ID",
+    );
   }
 
   await prisma.notification.upsert({
@@ -152,10 +175,12 @@ export const handleSendNotificationEvent = async (
     },
     create: {
       userId: payload.userId,
+
       // Prisma Client must be regenerated after adding the new enum values
       // to schema.prisma. The cast keeps source compatibility with older
       // generated clients during the staged migration.
       type: payload.notificationType as never,
+
       title: payload.title,
       message: payload.message,
       channel: "IN_APP",
@@ -207,68 +232,123 @@ export const handleProcessAuditEvent = async (
   });
 };
 
+/**
+ * Retrospective risk analysis for an already committed transfer.
+ *
+ * IMPORTANT:
+ * This handler runs after the transfer has been committed.
+ * It records a risk assessment but cannot hold or reverse the transfer.
+ *
+ * Actual pre-transaction risk enforcement must happen inside the
+ * transfer workflow before any balance movement.
+ */
 export const handleRiskAnalysis = async (
   payload: TransferCommittedPayload,
 ): Promise<void> => {
   const transaction = await getTransfer(payload.transactionId);
+
+  const windowMinutes =
+    env.backgroundJobs.riskAnalysis.windowMinutes;
+
+  const maxTransfersPerWindow =
+    env.backgroundJobs.riskAnalysis.maxTransfersPerWindow;
+
   const windowStart = new Date(
-    Date.now() - env.backgroundJobs.riskAnalysis.windowMinutes * 60_000,
+    Date.now() - windowMinutes * 60_000,
   );
 
   let recentTransferCount = 0;
+
   if (transaction.sourceAccountId) {
     recentTransferCount = await prisma.transaction.count({
       where: {
         sourceAccountId: transaction.sourceAccountId,
         type: "INTERNAL_TRANSFER",
         status: "COMPLETED",
-        createdAt: { gte: windowStart },
+        createdAt: {
+          gte: windowStart,
+        },
       },
     });
   }
 
-  const isReview = recentTransferCount >=
-    env.backgroundJobs.riskAnalysis.maxTransfersPerWindow;
+  const requiresReview =
+    recentTransferCount >= maxTransfersPerWindow;
 
-  const reasons = isReview
+  const reasons = requiresReview
     ? [
-        `Source account reached ${recentTransferCount} internal transfers within the configured ${env.backgroundJobs.riskAnalysis.windowMinutes}-minute window.`,
+        `Source account reached ${recentTransferCount} internal transfers within the configured ${windowMinutes}-minute window.`,
       ]
     : [];
 
+  const analyzedAt = new Date();
+
+  const riskLevel = requiresReview ? "HIGH" : "LOW";
+
+  // This is retrospective: the transaction is already committed, so this
+  // worker must never claim it can HOLD or route it into the pre-transfer queue.
+  const decision = "APPROVE";
+  const reviewStatus = "NOT_REQUIRED";
+
+  // The score is a simple binary indicator for this existing
+  // frequency-based rule, not a calibrated fraud probability.
+  const riskScore = requiresReview ? 100 : 0;
+
   await prisma.riskAnalysis.upsert({
-    where: { transactionId: transaction.id },
+    where: {
+      transactionId: transaction.id,
+    },
+
     create: {
       transactionId: transaction.id,
-      riskLevel: isReview ? "REVIEW" : "NORMAL",
+      riskScore,
+      riskLevel,
+      decision,
+      reviewStatus,
       reasons,
-      analyzedAt: new Date(),
+      engineVersion: "legacy-frequency-v1",
+      analyzedAt,
     },
-    update: {
-      riskLevel: isReview ? "REVIEW" : "NORMAL",
-      reasons,
-      analyzedAt: new Date(),
-    },
+
+    // Preserve Phase 32's synchronous pre-money-movement assessment.
+    // This legacy worker only backfills transactions that have no assessment.
+    update: {},
   });
 
-  if (isReview) {
-    console.warn("[background-risk-analysis] transfer flagged for review", {
-      transactionId: transaction.id,
-      reference: transaction.reference,
-      riskLevel: "REVIEW",
-      recentTransferCount,
-      windowMinutes: env.backgroundJobs.riskAnalysis.windowMinutes,
-    });
+  if (requiresReview) {
+    console.warn(
+      "[background-risk-analysis] committed transfer flagged for review",
+      {
+        transactionId: transaction.id,
+        reference: transaction.reference,
+        riskLevel,
+        decision,
+        reviewStatus,
+        riskScore,
+        recentTransferCount,
+        windowMinutes,
+        warning:
+          "This is a post-commit risk assessment. The transfer has already been committed.",
+      },
+    );
   }
 };
 
-const utcDayBounds = (date: Date): { start: Date; end: Date } => {
-  const start = new Date(Date.UTC(
-    date.getUTCFullYear(),
-    date.getUTCMonth(),
-    date.getUTCDate(),
-  ));
-  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+const utcDayBounds = (
+  date: Date,
+): { start: Date; end: Date } => {
+  const start = new Date(
+    Date.UTC(
+      date.getUTCFullYear(),
+      date.getUTCMonth(),
+      date.getUTCDate(),
+    ),
+  );
+
+  const end = new Date(
+    start.getTime() + 24 * 60 * 60 * 1000,
+  );
+
   return { start, end };
 };
 
@@ -281,10 +361,14 @@ export const handleGenerateReport = async (
 
   if (payload.periodStart || payload.periodEnd) {
     if (!payload.periodStart || !payload.periodEnd) {
-      throw new Error("Both report periodStart and periodEnd are required");
+      throw new Error(
+        "Both report periodStart and periodEnd are required",
+      );
     }
+
     periodStart = new Date(payload.periodStart);
     periodEnd = new Date(payload.periodEnd);
+
     if (
       Number.isNaN(periodStart.getTime()) ||
       Number.isNaN(periodEnd.getTime()) ||
@@ -293,15 +377,25 @@ export const handleGenerateReport = async (
       throw new Error("Invalid report period");
     }
   } else {
-    // Repeatable BullMQ jobs carry the scheduled occurrence timestamp. Use it
-    // rather than actual execution time so delayed/retried jobs report the day
-    // they were scheduled to cover, not the most recent day.
-    const referenceDate = payload.trigger === "scheduled" && Number.isFinite(scheduledAt)
-      ? new Date(scheduledAt as number)
-      : new Date();
+    // Repeatable BullMQ jobs carry the scheduled occurrence timestamp.
+    // Use it rather than actual execution time so delayed/retried jobs
+    // report the day they were scheduled to cover.
+    const referenceDate =
+      payload.trigger === "scheduled" &&
+      Number.isFinite(scheduledAt)
+        ? new Date(scheduledAt as number)
+        : new Date();
+
     const previousUtcDay = new Date(referenceDate);
-    previousUtcDay.setUTCDate(previousUtcDay.getUTCDate() - 1);
-    ({ start: periodStart, end: periodEnd } = utcDayBounds(previousUtcDay));
+
+    previousUtcDay.setUTCDate(
+      previousUtcDay.getUTCDate() - 1,
+    );
+
+    ({
+      start: periodStart,
+      end: periodEnd,
+    } = utcDayBounds(previousUtcDay));
   }
 
   const grouped = await prisma.transaction.groupBy({
@@ -312,24 +406,35 @@ export const handleGenerateReport = async (
         lt: periodEnd,
       },
     },
-    _count: { _all: true },
-    _sum: { amount: true },
+    _count: {
+      _all: true,
+    },
+    _sum: {
+      amount: true,
+    },
   });
 
   const payloadJson: Prisma.InputJsonValue = {
     periodStart: periodStart.toISOString(),
     periodEnd: periodEnd.toISOString(),
+
     groups: grouped.map((group) => ({
       currencyCode: group.currencyCode,
       status: group.status,
       transactionCount: group._count._all,
-      totalAmount: group._sum.amount?.toString() ?? "0",
+      totalAmount:
+        group._sum.amount?.toString() ?? "0",
     })),
   };
 
-  const dedupeKey = `daily-transaction-report-${periodStart.toISOString()}`;
+  const dedupeKey =
+    `daily-transaction-report-${periodStart.toISOString()}`;
+
   await prisma.backgroundReport.upsert({
-    where: { dedupeKey },
+    where: {
+      dedupeKey,
+    },
+
     create: {
       reportType: "DAILY_TRANSACTION_SUMMARY",
       dedupeKey,
@@ -338,6 +443,7 @@ export const handleGenerateReport = async (
       payload: payloadJson,
       generatedAt: new Date(),
     },
+
     update: {
       periodEnd,
       payload: payloadJson,

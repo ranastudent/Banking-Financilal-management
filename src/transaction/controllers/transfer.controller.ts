@@ -153,12 +153,21 @@ export const processTransfer = async (
     throw error;
   }
 
-  recordTransferResult(true);
-  logger.info("transfer.succeeded", {
-    requestId: req.requestId,
-    userId: req.user.id,
-    transactionId: result.transaction.id,
-  });
+  const isHeld = "held" in result && result.held;
+  if (isHeld) {
+    logger.info("transfer.held_for_risk_review", {
+      requestId: req.requestId,
+      userId: req.user.id,
+      transactionId: result.transaction.id,
+    });
+  } else {
+    recordTransferResult(true);
+    logger.info("transfer.succeeded", {
+      requestId: req.requestId,
+      userId: req.user.id,
+      transactionId: result.transaction.id,
+    });
+  }
 
   const responseData = {
     message: "Fund transfer completed successfully",
@@ -172,9 +181,11 @@ export const processTransfer = async (
    * inside the financial Prisma transaction.
    */
 
-  res.status(200).json({
+  res.status(isHeld ? 202 : 200).json({
     success: true,
-    data: responseData,
+    data: "held" in result && result.held
+      ? { message: "Transfer is on hold pending risk review. No money has been moved.", transaction: result.transaction, risk: result.risk }
+      : responseData,
     requestId: req.requestId,
   });
 };

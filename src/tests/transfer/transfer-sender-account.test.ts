@@ -46,6 +46,13 @@ describe("14.2.1 Sender Account Validation", () => {
         },
       });
 
+      await prisma.riskReview.deleteMany({
+        where: { riskAnalysis: { is: { transactionId: { in: createdTransactionIds } } } },
+      });
+      await prisma.riskAnalysis.deleteMany({
+        where: { transactionId: { in: createdTransactionIds } },
+      });
+
       await prisma.transaction.deleteMany({
         where: {
           id: {

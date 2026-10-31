@@ -1,4 +1,3 @@
-import "../setup";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TransactionStatus, TransactionType } from "@prisma/client";
 

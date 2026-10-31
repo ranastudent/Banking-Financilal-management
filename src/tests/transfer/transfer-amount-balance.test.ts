@@ -53,6 +53,13 @@ describe("14.2.8 Amount / Sufficient Balance Validation", () => {
       /*
        * Delete transactions after dependent records.
        */
+      await prisma.riskReview.deleteMany({
+        where: { riskAnalysis: { is: { transactionId: { in: createdTransactionIds } } } },
+      });
+      await prisma.riskAnalysis.deleteMany({
+        where: { transactionId: { in: createdTransactionIds } },
+      });
+
       await prisma.transaction.deleteMany({
         where: {
           id: {

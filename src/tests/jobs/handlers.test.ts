@@ -1,4 +1,3 @@
-import "../setup";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -64,7 +63,7 @@ describe("background job handlers", () => {
     expect(mocks.sendEmail.mock.calls[0]?.[0]?.to).toBe("sender@example.test");
   });
 
-  it("stores NORMAL risk when the recent transfer count is below the configured threshold", async () => {
+  it("stores LOW retrospective risk when the recent transfer count is below the configured threshold", async () => {
     const threshold = env.backgroundJobs.riskAnalysis.maxTransfersPerWindow;
     mocks.count.mockResolvedValue(Math.max(0, threshold - 1));
 
@@ -86,17 +85,14 @@ describe("background job handlers", () => {
       where: { transactionId: "transaction-1" },
       create: expect.objectContaining({
         transactionId: "transaction-1",
-        riskLevel: "NORMAL",
+        riskLevel: "LOW",
         reasons: [],
       }),
-      update: expect.objectContaining({
-        riskLevel: "NORMAL",
-        reasons: [],
-      }),
+      update: {},
     }));
   });
 
-  it("flags risk for review when the recent transfer count reaches the configured threshold", async () => {
+  it("records HIGH retrospective risk without attempting to hold an already committed transfer", async () => {
     const threshold = env.backgroundJobs.riskAnalysis.maxTransfersPerWindow;
     mocks.count.mockResolvedValue(threshold);
 
@@ -110,14 +106,12 @@ describe("background job handlers", () => {
       where: { transactionId: "transaction-1" },
       create: expect.objectContaining({
         transactionId: "transaction-1",
-        riskLevel: "REVIEW",
+        riskLevel: "HIGH",
         reasons: expect.arrayContaining([
           expect.stringContaining(String(threshold)),
         ]),
       }),
-      update: expect.objectContaining({
-        riskLevel: "REVIEW",
-      }),
+      update: {},
     }));
   });
 

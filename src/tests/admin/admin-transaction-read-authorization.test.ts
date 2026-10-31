@@ -88,7 +88,14 @@ const createRefreshToken = (user: {
 
 afterEach(async () => {
   if (createdTransactionIds.length > 0) {
-    await prisma.transaction.deleteMany({
+    await prisma.riskReview.deleteMany({
+        where: { riskAnalysis: { is: { transactionId: { in: createdTransactionIds } } } },
+      });
+      await prisma.riskAnalysis.deleteMany({
+        where: { transactionId: { in: createdTransactionIds } },
+      });
+
+      await prisma.transaction.deleteMany({
       where: {
         id: {
           in: createdTransactionIds,

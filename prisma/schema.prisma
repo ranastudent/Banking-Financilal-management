@@ -32,6 +32,7 @@ model User {
   idempotencyRecords      IdempotencyRecord[]      @relation("UserIdempotencyRecords")
   notifications           Notification[]
   refreshTokens           RefreshToken[]
+  riskReviews             RiskReview[]             @relation("RiskReviewReviewer")
 
   @@index([role])
   @@index([status])
@@ -450,6 +451,7 @@ enum TransactionType {
 
 enum TransactionStatus {
   PENDING
+  ON_HOLD
   PROCESSING
   COMPLETED
   FAILED
@@ -577,15 +579,76 @@ model BackgroundReport {
   @@map("background_reports")
 }
 
+enum RiskLevel {
+  LOW
+  HIGH
+}
+
+enum RiskDecision {
+  APPROVE
+  HOLD
+}
+
+enum RiskReviewStatus {
+  NOT_REQUIRED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum RiskReviewDecision {
+  APPROVED
+  REJECTED
+}
+
 model RiskAnalysis {
-  id            String      @id @default(uuid()) @db.Uuid
-  transactionId String      @unique @map("transaction_id") @db.Uuid
-  riskLevel     String      @map("risk_level")
+  id            String @id @default(uuid()) @db.Uuid
+  transactionId String @unique @map("transaction_id") @db.Uuid
+
+  // Risk assessment
+  riskScore Int          @default(0) @map("risk_score")
+  riskLevel RiskLevel    @map("risk_level")
+  decision  RiskDecision
+
+  // Administrative review
+  reviewStatus RiskReviewStatus @default(NOT_REQUIRED) @map("review_status")
+
+  // Assessment explanation and engine version
   reasons       Json
-  analyzedAt    DateTime    @default(now()) @map("analyzed_at")
-  createdAt     DateTime    @default(now()) @map("created_at")
-  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  engineVersion String @default("rules-v1") @map("engine_version")
+
+  // Timestamps
+  analyzedAt DateTime @default(now()) @map("analyzed_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  transaction Transaction  @relation(fields: [transactionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  reviews     RiskReview[]
 
   @@index([riskLevel, analyzedAt])
+  @@index([decision, analyzedAt])
+  @@index([reviewStatus, analyzedAt])
   @@map("risk_analyses")
+}
+
+model RiskReview {
+  id             String @id @default(uuid()) @db.Uuid
+  riskAnalysisId String @map("risk_analysis_id") @db.Uuid
+  reviewerId     String @map("reviewer_id") @db.Uuid
+
+  decision  RiskReviewDecision
+  comment   String?
+  requestId String?            @map("request_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  riskAnalysis RiskAnalysis @relation(fields: [riskAnalysisId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  reviewer     User         @relation("RiskReviewReviewer", fields: [reviewerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([riskAnalysisId, createdAt])
+  @@index([reviewerId, createdAt])
+  @@index([decision, createdAt])
+  @@index([requestId])
+  @@map("risk_reviews")
 }

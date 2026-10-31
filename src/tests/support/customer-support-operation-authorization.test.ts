@@ -459,7 +459,9 @@ describe(
           description: "x".repeat(1001),
         });
 
-      expect(response.status).toBe(413);
+      // The JSON body is within the HTTP body-size limit; this is a
+      // field-level schema validation failure, so the API returns 400.
+      expect(response.status).toBe(400);
       expect(response.body.success).toBe(false);
     });
 
