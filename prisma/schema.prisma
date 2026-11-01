@@ -45,6 +45,8 @@ model User {
   fraudCaseAlertsLinked    FraudCaseAlert[]         @relation("FraudCaseAlertLinker")
   fraudAlerts              FraudAlert[]
 
+  transactionDecisionExplanations TransactionDecisionExplanation[]
+
   @@index([role])
   @@index([status])
   @@map("users")
@@ -182,6 +184,8 @@ model Transaction {
   currency                    Currency                     @relation(fields: [currencyCode], references: [code])
   destinationAccount          Account?                     @relation("TransactionDestinationAccount", fields: [destinationAccountId], references: [id])
   sourceAccount               Account?                     @relation("TransactionSourceAccount", fields: [sourceAccountId], references: [id])
+
+  decisionExplanations TransactionDecisionExplanation[]
 
   @@index([status, createdAt])
   @@index([sourceAccountId, createdAt])
@@ -641,11 +645,13 @@ model RiskAnalysis {
   // Timestamps
   analyzedAt DateTime @default(now()) @map("analyzed_at")
   createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at")
 
   // Relations
   transaction Transaction  @relation(fields: [transactionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   reviews     RiskReview[]
+
+  decisionExplanations TransactionDecisionExplanation[]
 
   @@index([riskLevel, analyzedAt])
   @@index([decision, analyzedAt])
@@ -782,6 +788,8 @@ model MonitoringEvent {
   anomalyResults AnomalyDetectionResult[]
   predictions    FraudPrediction[]
   alerts         FraudAlert[]
+
+  decisionExplanations TransactionDecisionExplanation[]
 
   @@index([status, createdAt])
   @@index([eventType, occurredAt])
@@ -943,6 +951,8 @@ model FraudAlert {
   caseLinks       FraudCaseAlert[]
   auditHistory    FraudAlertAudit[]
 
+  decisionExplanations TransactionDecisionExplanation[]
+
   @@index([status, severity, createdAt])
   @@index([userId, createdAt])
   @@index([accountId, createdAt])
@@ -1088,4 +1098,93 @@ model FraudCaseAudit {
   @@index([fraudCaseId, createdAt])
   @@index([actorId, createdAt])
   @@map("fraud_case_audits")
+}
+
+// -----------------------------------------------------------------------------
+// CUSTOMER-FACING TRANSACTION DECISION EXPLANATIONS
+// Shared by Phase 32 Risk Detection and Phase 33 Fraud Monitoring.
+//
+// These records are customer-safe historical snapshots. They explain decisions
+// but do not themselves authorize, reject, hold, release, or reverse funds.
+// -----------------------------------------------------------------------------
+
+enum DecisionExplanationPhase {
+  PHASE32
+  PHASE33
+  SHARED
+}
+
+enum DecisionExplanationSource {
+  PHASE32_RISK_ENGINE
+  PHASE33_MONITORING
+  TRANSACTION_VALIDATION
+  COMPLIANCE_REVIEW
+  MANUAL_REVIEW
+  SYSTEM_VALIDATION
+}
+
+enum CustomerTransactionDecision {
+  APPROVED
+  ON_HOLD
+  REJECTED
+  CANCELLED
+  NEEDS_VERIFICATION
+  PROCESSING
+}
+
+enum TransactionExplanationStatus {
+  ACTIVE
+  SUPERSEDED
+  WITHDRAWN
+}
+
+model TransactionDecisionExplanation {
+  id            String @id @default(uuid()) @db.Uuid
+  transactionId String @map("transaction_id") @db.Uuid
+  customerId    String @map("customer_id") @db.Uuid
+
+  phase           DecisionExplanationPhase
+  source          DecisionExplanationSource
+  decision        CustomerTransactionDecision
+  decisionVersion Int                          @default(1) @map("decision_version")
+  status          TransactionExplanationStatus @default(ACTIVE)
+
+  riskAnalysisId    String? @map("risk_analysis_id") @db.Uuid
+  monitoringEventId String? @map("monitoring_event_id") @db.Uuid
+  fraudAlertId      String? @map("fraud_alert_id") @db.Uuid
+
+  customerTitle   String @map("customer_title")
+  customerMessage String @map("customer_message")
+
+  reasonCodes     Json  @map("reason_codes")
+  requiredActions Json? @map("required_actions")
+
+  // Must be derived from the authoritative transaction and ledger state.
+  // Never infer fund movement solely from a risk decision or fraud alert.
+  transactionImpact Json @map("transaction_impact")
+
+  publicReference String @unique @map("public_reference")
+  locale          String @default("en")
+
+  decisionAt DateTime @default(now()) @map("decision_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+
+  customer User @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  riskAnalysis RiskAnalysis? @relation(fields: [riskAnalysisId], references: [id], onDelete: SetNull)
+
+  monitoringEvent MonitoringEvent? @relation(fields: [monitoringEventId], references: [id], onDelete: SetNull)
+
+  fraudAlert FraudAlert? @relation(fields: [fraudAlertId], references: [id], onDelete: SetNull)
+
+  @@unique([transactionId, decisionVersion])
+  @@index([customerId, createdAt])
+  @@index([transactionId, status])
+  @@index([decision, createdAt])
+  @@index([phase, createdAt])
+  @@index([source, createdAt])
+  @@map("transaction_decision_explanations")
 }
