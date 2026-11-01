@@ -7,7 +7,10 @@ import type {
   NotificationEventPayload,
   ReportJobPayload,
   TransferCommittedPayload,
+  MonitoringEventJobPayload,
 } from "./types";
+import { ingestCommittedTransaction } from "../monitoring/services/monitoring-event.service";
+import { processMonitoringEvent } from "../monitoring/services/monitoring-processing.service";
 
 const getTransfer = async (transactionId: string) => {
   const transaction = await prisma.transaction.findUnique({
@@ -457,4 +460,13 @@ export const handleGenerateReport = async (
     periodEnd: periodEnd.toISOString(),
     groups: grouped.length,
   });
+};
+
+/** Retrospective monitor: invoked only after the transfer outbox is published. */
+export const handleMonitorTransaction = async (payload: TransferCommittedPayload): Promise<void> => {
+  await ingestCommittedTransaction(payload.transactionId, payload.outboxEventId);
+};
+
+export const handleProcessMonitoringEvent = async (payload: MonitoringEventJobPayload): Promise<void> => {
+  await processMonitoringEvent(payload.monitoringEventId);
 };

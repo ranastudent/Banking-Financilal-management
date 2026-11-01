@@ -11,7 +11,7 @@ import { env } from "../../config/env";
 const createdUserIds: string[] = [];
 
 const createUser = async (
-  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR",
+  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR" | "RISK_ANALYST",
 ) => {
   const user = await prisma.user.create({
     data: {

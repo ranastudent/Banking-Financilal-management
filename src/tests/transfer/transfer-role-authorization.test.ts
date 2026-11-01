@@ -86,7 +86,7 @@ describe("14.3.2 Transfer Role Authorization", () => {
       | "CUSTOMER"
       | "ADMIN"
       | "SUPPORT"
-      | "AUDITOR",
+      | "AUDITOR" | "RISK_ANALYST",
   ) => {
     const user = await prisma.user.create({
       data: {
@@ -111,7 +111,7 @@ describe("14.3.2 Transfer Role Authorization", () => {
       | "CUSTOMER"
       | "ADMIN"
       | "SUPPORT"
-      | "AUDITOR";
+      | "AUDITOR" | "RISK_ANALYST";
   }) => {
     return generateAccessToken({
       id: user.id,

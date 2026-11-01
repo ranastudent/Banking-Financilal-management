@@ -6,7 +6,7 @@ import { authorize } from "../../middleware/authorize";
 const createMockRequest = (user?: {
   id: string;
   email: string;
-  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR";
+  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR" | "RISK_ANALYST";
   status: "ACTIVE" | "INACTIVE" | "SUSPENDED" | "BLOCKED";
 }) => {
   return {

@@ -16,7 +16,7 @@ const createAuditor = (): AuthUser => ({
 });
 
 const createUser = (
-  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR",
+  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR" | "RISK_ANALYST",
 ): AuthUser => ({
   id: `${role.toLowerCase()}-1`,
   email: `${role.toLowerCase()}@example.com`,

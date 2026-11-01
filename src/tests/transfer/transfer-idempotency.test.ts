@@ -69,7 +69,7 @@ describe("Fund Transfer - Idempotency", () => {
   const createAccessToken = (user: {
     id: string;
     email: string;
-    role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR";
+    role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR" | "RISK_ANALYST";
   }) => {
     return generateAccessToken({
       id: user.id,

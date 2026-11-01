@@ -17,7 +17,7 @@ import { env } from "../../config/env";
 const createdUserIds: string[] = [];
 
 const createUser = async (
-  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR",
+  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR" | "RISK_ANALYST",
   overrides: {
     name?: string;
     email?: string;

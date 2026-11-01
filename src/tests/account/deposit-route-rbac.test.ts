@@ -238,7 +238,7 @@ describe("12.2 Deposit Route + JWT + RBAC", () => {
       | "CUSTOMER"
       | "ADMIN"
       | "SUPPORT"
-      | "AUDITOR",
+      | "AUDITOR" | "RISK_ANALYST",
   ) => {
     const user = await prisma.user.create({
       data: {
@@ -283,7 +283,7 @@ describe("12.2 Deposit Route + JWT + RBAC", () => {
       | "CUSTOMER"
       | "ADMIN"
       | "SUPPORT"
-      | "AUDITOR";
+      | "AUDITOR" | "RISK_ANALYST";
   }) => {
     return generateAccessToken({
       id: user.id,

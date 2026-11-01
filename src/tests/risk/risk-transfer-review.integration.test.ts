@@ -6,7 +6,7 @@ import app from "../../app";
 import { prisma } from "../../config/prisma";
 import { generateAccessToken } from "../../auth/utils/jwt";
 
-type TestRole = "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR";
+type TestRole = "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR" | "RISK_ANALYST";
 
 const createdUserIds: string[] = [];
 const createdAccountIds: string[] = [];
@@ -116,6 +116,17 @@ const createHighRiskTransfer = async () => {
   expect(risk).not.toBeNull();
   if (!risk) throw new Error("Expected risk assessment for held transfer");
 
+  const explanation = await prisma.transactionDecisionExplanation.findFirst({
+    where: { transactionId: heldTransaction.id, phase: "PHASE32", decision: "ON_HOLD" },
+  });
+  expect(explanation).not.toBeNull();
+  expect(explanation?.customerMessage).toContain("security review");
+
+  const phase32Alert = await prisma.fraudAlert.findFirst({
+    where: { transactionId: heldTransaction.id, source: "PHASE32_RULE" },
+  });
+  expect(phase32Alert).not.toBeNull();
+
   return {
     customer,
     receiver,
@@ -166,6 +177,9 @@ afterEach(async () => {
   }
 
   if (createdTransactionIds.length > 0) {
+    await prisma.transactionDecisionExplanation.deleteMany({ where: { transactionId: { in: createdTransactionIds } } });
+    await prisma.fraudAlertAudit.deleteMany({ where: { fraudAlert: { is: { transactionId: { in: createdTransactionIds } } } } });
+    await prisma.fraudAlert.deleteMany({ where: { transactionId: { in: createdTransactionIds } } });
     await prisma.ledgerEntry.deleteMany({ where: { transactionId: { in: createdTransactionIds } } });
     await prisma.transactionLeg.deleteMany({ where: { transactionId: { in: createdTransactionIds } } });
     await prisma.riskReview.deleteMany({

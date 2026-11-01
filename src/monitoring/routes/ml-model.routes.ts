@@ -1,0 +1,10 @@
+import { Router } from "express";
+import { authenticate } from "../../middleware/authenticate";
+import { authorize } from "../../middleware/authorize";
+import { listModels, createModel, transitionModel } from "../controllers/ml-model.controller";
+const router = Router();
+router.use(authenticate, authorize("ADMIN"));
+router.get("/", listModels);
+router.post("/", createModel);
+router.patch("/:modelId/lifecycle", transitionModel);
+export default router;

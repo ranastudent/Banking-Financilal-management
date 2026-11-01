@@ -14,7 +14,7 @@ const testPasswordHash =
 const createdUserIds: string[] = [];
 
 const createUser = async (
-  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR",
+  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR" | "RISK_ANALYST",
   suffix: string,
 ) => {
   const user = await prisma.user.create({

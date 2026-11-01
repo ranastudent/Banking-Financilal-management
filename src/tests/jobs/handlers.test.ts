@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   sendEmail: vi.fn(),
   enqueueEmailRecipientJobs: vi.fn(),
+  enqueueMonitoringEvent: vi.fn(),
   groupBy: vi.fn(),
   count: vi.fn(),
   riskUpsert: vi.fn(),
@@ -18,7 +19,7 @@ vi.mock("../../config/prisma", () => ({
   },
 }));
 vi.mock("../../utils/mailer", () => ({ sendEmail: mocks.sendEmail }));
-vi.mock("../../jobs/queues", () => ({ enqueueEmailRecipientJobs: mocks.enqueueEmailRecipientJobs }));
+vi.mock("../../jobs/queues", () => ({ enqueueEmailRecipientJobs: mocks.enqueueEmailRecipientJobs, enqueueMonitoringEvent: mocks.enqueueMonitoringEvent }));
 
 import { handleGenerateReport, handleRiskAnalysis, handleSendEmail } from "../../jobs/handlers";
 import { env } from "../../config/env";

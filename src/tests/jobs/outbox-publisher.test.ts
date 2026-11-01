@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   queryRaw: vi.fn(),
   enqueueTransferJobs: vi.fn(),
   enqueueNotificationEvent: vi.fn(),
+  enqueueMonitoringEvent: vi.fn(),
 }));
 
 vi.mock("../../config/prisma", () => ({
@@ -23,6 +24,7 @@ vi.mock("../../config/prisma", () => ({
 vi.mock("../../jobs/queues", () => ({
   enqueueTransferJobs: mocks.enqueueTransferJobs,
   enqueueNotificationEvent: mocks.enqueueNotificationEvent,
+  enqueueMonitoringEvent: mocks.enqueueMonitoringEvent,
 }));
 
 import { publishPendingOutboxEvents } from "../../jobs/outbox-publisher";

@@ -12,7 +12,7 @@ const createdUserIds: string[] = [];
 const createTestUser = async (
   name: string,
   email: string,
-  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR" = "CUSTOMER",
+  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR" | "RISK_ANALYST" = "CUSTOMER",
 ) => {
   const user = await prisma.user.create({
     data: {

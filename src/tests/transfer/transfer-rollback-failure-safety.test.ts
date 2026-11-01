@@ -267,7 +267,7 @@ describe("Fund Transfer - Rollback & Failure Safety", () => {
       | "CUSTOMER"
       | "ADMIN"
       | "SUPPORT"
-      | "AUDITOR";
+      | "AUDITOR" | "RISK_ANALYST";
   }) => {
     return generateAccessToken({
       id: user.id,

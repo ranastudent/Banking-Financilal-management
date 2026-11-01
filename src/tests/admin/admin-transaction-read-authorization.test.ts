@@ -11,7 +11,7 @@ const createdUserIds: string[] = [];
 const createdTransactionIds: string[] = [];
 
 const createTestUser = async (
-  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR",
+  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR" | "RISK_ANALYST",
 ) => {
   const user = await prisma.user.create({
     data: {

@@ -269,7 +269,7 @@ describe("Fund Transfer - Audit Log", () => {
       | "CUSTOMER"
       | "ADMIN"
       | "SUPPORT"
-      | "AUDITOR";
+      | "AUDITOR" | "RISK_ANALYST";
   }) => {
     return generateAccessToken({
       id: user.id,

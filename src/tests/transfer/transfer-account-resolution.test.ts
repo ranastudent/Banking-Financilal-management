@@ -273,7 +273,7 @@ describe("14.4 Transfer Sender/Receiver Resolution", () => {
   const createAccessToken = (user: {
   id: string;
   email: string;
-  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR";
+  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR" | "RISK_ANALYST";
 }) => {
   return generateAccessToken({
     id: user.id,

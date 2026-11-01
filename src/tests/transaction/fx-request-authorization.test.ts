@@ -15,7 +15,7 @@ const createdFxRequestIds: string[] = [];
 const TEST_CURRENCY = "USD";
 
 const createUser = async (
-  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR",
+  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR" | "RISK_ANALYST",
 ) => {
   const user = await prisma.user.create({
     data: {

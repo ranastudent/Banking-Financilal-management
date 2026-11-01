@@ -11,6 +11,7 @@ import { ErrorCode } from "../../errors/errorCodes";
 import type { AuthUser } from "../../types/auth";
 import type { TransferInput } from "../schemas/transfer.schema";
 import { assessTransferRisk } from "../../risk/services/risk-assessment.service";
+import { createDecisionExplanationWithClient } from "../../monitoring/services/decision-explanation.service";
 import { recordRiskAssessment } from "../../observability/metrics";
 import type { RiskAssessment } from "../../risk/risk.types";
 import { getTransferAuthorizedAccounts } from "../policies/transfer.policy";
@@ -472,7 +473,7 @@ export const prepareTransfer = async (
           },
         });
 
-        await tx.riskAnalysis.create({
+        const riskAnalysisRecord = await tx.riskAnalysis.create({
           data: {
             transactionId: transaction.id,
             riskScore: riskAssessment!.score,
@@ -482,6 +483,49 @@ export const prepareTransfer = async (
             reasons: riskAssessment!.reasons as unknown as Prisma.InputJsonValue,
             engineVersion: riskAssessment!.engineVersion,
           },
+        });
+
+        // Surface the preventive Phase 32 hold in the shared fraud work queue.
+        // The alert is operational evidence only; the risk engine already made
+        // the pre-ledger hold decision above.
+        const phase32Alert = await tx.fraudAlert.create({
+          data: {
+            dedupeKey: `phase32-risk:${transaction.id}`,
+            transactionId: transaction.id,
+            accountId: preflightSender.id,
+            userId: preflightSender.user_id,
+            source: "PHASE32_RULE",
+            severity: "HIGH",
+            status: "OPEN",
+            riskScore: riskAssessment!.score,
+            title: "Transfer held for security review",
+            description: "A preventive risk assessment placed this transfer on hold before ledger posting.",
+            evidence: {
+              riskAnalysisId: riskAnalysisRecord.id,
+              engineVersion: riskAssessment!.engineVersion,
+              internalReasons: riskAssessment!.reasons as unknown as Prisma.InputJsonValue,
+            },
+          },
+        });
+        await tx.fraudAlertAudit.create({
+          data: {
+            fraudAlertId: phase32Alert.id,
+            action: "ALERT_CREATED",
+            toStatus: "OPEN",
+            comment: "Created from a preventive Phase 32 risk hold.",
+          },
+        });
+
+        // Customer-safe explanation is written in the same DB transaction as
+        // the hold, risk record and operational alert.
+        await createDecisionExplanationWithClient(tx, {
+          transactionId: transaction.id,
+          customerId: preflightSender.user_id,
+          phase: "PHASE32",
+          source: "PHASE32_RISK_ENGINE",
+          decision: "ON_HOLD",
+          riskAnalysisId: riskAnalysisRecord.id,
+          fraudAlertId: phase32Alert.id,
         });
 
         await writeAuditLog({
@@ -1188,6 +1232,24 @@ export const prepareTransfer = async (
           const heldRisk = await tx.riskAnalysis.update({
             where: { transactionId: riskApproval.heldTransactionId },
             data: { reviewStatus: "APPROVED" },
+          });
+          const phase32Alert = await tx.fraudAlert.findFirst({
+            where: { transactionId: riskApproval.heldTransactionId, source: "PHASE32_RULE" },
+          });
+          if (phase32Alert && phase32Alert.status !== "FALSE_POSITIVE") {
+            await tx.fraudAlert.update({ where: { id: phase32Alert.id }, data: { status: "FALSE_POSITIVE", resolvedAt: new Date() } });
+            await tx.fraudAlertAudit.create({
+              data: { fraudAlertId: phase32Alert.id, actorId: riskApproval.reviewerId, action: "STATUS_CHANGED", fromStatus: phase32Alert.status, toStatus: "FALSE_POSITIVE", comment: riskApproval.comment ?? "Transfer approved after manual review." },
+            });
+          }
+          await createDecisionExplanationWithClient(tx, {
+            transactionId: riskApproval.heldTransactionId,
+            customerId: sender.user_id,
+            phase: "PHASE32",
+            source: "MANUAL_REVIEW",
+            decision: "CANCELLED",
+            riskAnalysisId: heldRisk.id,
+            ...(phase32Alert ? { fraudAlertId: phase32Alert.id } : {}),
           });
           await tx.riskReview.create({
             data: {

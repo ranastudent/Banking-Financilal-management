@@ -23,6 +23,8 @@ export type NotificationEventPayload = {
   metadata?: Record<string, string | number | boolean | null>;
 };
 
+export type MonitoringEventJobPayload = { monitoringEventId: string };
+
 export type ReportJobPayload = {
   trigger: "scheduled" | "manual";
   periodStart?: string;
@@ -32,7 +34,8 @@ export type ReportJobPayload = {
 export type BackgroundJobData =
   | TransferCommittedPayload
   | NotificationEventPayload
-  | ReportJobPayload;
+  | ReportJobPayload
+  | MonitoringEventJobPayload;
 
 export type BackgroundJobName =
   | "send-email"
@@ -40,7 +43,9 @@ export type BackgroundJobName =
   | "send-notification-event"
   | "process-audit-event"
   | "risk-analysis"
-  | "generate-report";
+  | "generate-report"
+  | "monitor-transaction"
+  | "process-monitoring-event";
 
 export const isTransferCommittedPayload = (
   value: BackgroundJobData,

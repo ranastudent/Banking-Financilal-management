@@ -139,7 +139,7 @@ describe(
         | "CUSTOMER"
         | "ADMIN"
         | "SUPPORT"
-        | "AUDITOR",
+        | "AUDITOR" | "RISK_ANALYST",
     ) => {
       const user = await prisma.user.create({
         data: {
@@ -215,7 +215,7 @@ describe(
           | "CUSTOMER"
           | "ADMIN"
           | "SUPPORT"
-          | "AUDITOR";
+          | "AUDITOR" | "RISK_ANALYST";
       },
     ) => {
       return generateAccessToken({

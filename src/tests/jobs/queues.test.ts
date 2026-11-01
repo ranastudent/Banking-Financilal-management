@@ -16,6 +16,7 @@ vi.mock("../../jobs/connection", () => ({
 import {
   enqueueEmailRecipientJobs,
   enqueueNotificationEvent,
+  enqueueMonitoringEvent,
   enqueueReportGeneration,
   enqueueTransferJobs,
 } from "../../jobs/queues";
@@ -29,8 +30,8 @@ describe("background queue idempotency", () => {
     await enqueueTransferJobs(payload);
     const ids = mocks.add.mock.calls.map((call) => call[2]?.jobId);
     expect(ids).toEqual([
-      "event-1-send-email", "event-1-send-notification", "event-1-process-audit-event", "event-1-risk-analysis",
-      "event-1-send-email", "event-1-send-notification", "event-1-process-audit-event", "event-1-risk-analysis",
+      "event-1-send-email", "event-1-send-notification", "event-1-process-audit-event", "event-1-risk-analysis", "event-1-monitor-transaction",
+      "event-1-send-email", "event-1-send-notification", "event-1-process-audit-event", "event-1-risk-analysis", "event-1-monitor-transaction",
     ]);
   });
 
@@ -69,6 +70,19 @@ describe("notification queue idempotency", () => {
     expect(mocks.add.mock.calls.map((call) => call[2]?.jobId)).toEqual([
       "event-24-notification-user-24",
       "event-24-notification-user-24",
+    ]);
+  });
+});
+
+
+describe("monitoring queue idempotency", () => {
+  beforeEach(() => { vi.clearAllMocks(); mocks.add.mockResolvedValue({ id: "mock-job" }); });
+  it("uses a stable event-specific processing job ID", async () => {
+    await enqueueMonitoringEvent({ monitoringEventId: "monitor-1" });
+    await enqueueMonitoringEvent({ monitoringEventId: "monitor-1" });
+    expect(mocks.add.mock.calls.map((call) => call[2]?.jobId)).toEqual([
+      "monitoring-event-monitor-1",
+      "monitoring-event-monitor-1",
     ]);
   });
 });

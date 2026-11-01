@@ -30,6 +30,10 @@ import accountRoutes from "../account/routes/account.routes";
 import transferRoutes from "../transaction/routes/transfer.routes";
 import notificationRoutes from "../notifications/routes/notification.routes";
 import riskReviewRoutes from "../risk/routes/risk-review.routes";
+import monitoringRoutes from "../monitoring/routes/monitoring.routes";
+import fraudRoutes from "../monitoring/routes/fraud.routes";
+import customerDecisionRoutes from "../monitoring/routes/customer-decision.routes";
+import fraudModelRoutes from "../monitoring/routes/ml-model.routes";
 
 const router = Router();
 
@@ -64,5 +68,9 @@ router.use("/users", userRoutes);
 router.use("/accounts", accountRoutes);
 router.use("/notifications", notificationRoutes);
 router.use("/admin/risk-reviews", riskReviewRoutes);
+router.use("/admin/monitoring", monitoringRoutes);
+router.use("/admin/fraud", fraudRoutes);
+router.use("/admin/fraud-models", fraudModelRoutes);
+router.use("/customer/decision-explanations", customerDecisionRoutes);
 
 export default router;

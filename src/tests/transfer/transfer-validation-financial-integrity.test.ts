@@ -170,7 +170,7 @@ const createUser = async (
     | "CUSTOMER"
     | "ADMIN"
     | "SUPPORT"
-    | "AUDITOR" = "CUSTOMER",
+    | "AUDITOR" | "RISK_ANALYST" = "CUSTOMER",
 ) => {
   const user = await prisma.user.create({
     data: {
@@ -219,7 +219,7 @@ const createAccessToken = (user: {
     | "CUSTOMER"
     | "ADMIN"
     | "SUPPORT"
-    | "AUDITOR";
+    | "AUDITOR" | "RISK_ANALYST";
 }) => {
   return generateAccessToken({
     id: user.id,

@@ -33,7 +33,7 @@ const transactionGroups = () => [
   { type: "INTERNAL_TRANSFER", status: "PROCESSING", currencyCode: "USD", _count: { _all: 4 }, _sum: { amount: new Prisma.Decimal("800") } },
 ];
 
-const createAccessToken = (role: "ADMIN" | "CUSTOMER" | "SUPPORT" | "AUDITOR") =>
+const createAccessToken = (role: "ADMIN" | "CUSTOMER" | "SUPPORT" | "AUDITOR" | "RISK_ANALYST") =>
   jwt.sign(
     {
       sub: `phase26-${role.toLowerCase()}-user`,

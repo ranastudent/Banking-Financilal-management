@@ -11,6 +11,8 @@ import {
   handleGenerateReport,
   handleProcessAuditEvent,
   handleRiskAnalysis,
+  handleMonitorTransaction,
+  handleProcessMonitoringEvent,
   handleSendEmail,
   handleSendNotification,
   handleSendNotificationEvent,
@@ -21,6 +23,7 @@ import type {
   NotificationEventPayload,
   ReportJobPayload,
   TransferCommittedPayload,
+  MonitoringEventJobPayload,
 } from "./types";
 import { isNotificationEventPayload, isTransferCommittedPayload } from "./types";
 import { logger } from "../observability/logger";
@@ -39,6 +42,8 @@ const createWorker = (): Worker<BackgroundJobData, void, BackgroundJobName> => {
       });
       if (job.name === "generate-report") {
         await handleGenerateReport(job.data as ReportJobPayload, job.timestamp);
+      } else if (job.name === "process-monitoring-event") {
+        await handleProcessMonitoringEvent(job.data as MonitoringEventJobPayload);
       } else if (job.name === "send-notification-event") {
         if (!isNotificationEventPayload(job.data)) {
           throw new Error(`Invalid notification-event payload for job ${job.name}`);
@@ -52,6 +57,7 @@ const createWorker = (): Worker<BackgroundJobData, void, BackgroundJobName> => {
           case "send-notification": await handleSendNotification(payload); break;
           case "process-audit-event": await handleProcessAuditEvent(payload); break;
           case "risk-analysis": await handleRiskAnalysis(payload); break;
+          case "monitor-transaction": await handleMonitorTransaction(payload); break;
           default: { const exhaustive: never = job.name; throw new Error(`Unsupported background job: ${exhaustive}`); }
         }
       }

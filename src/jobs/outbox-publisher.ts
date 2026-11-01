@@ -1,4 +1,5 @@
 import { prisma } from "../config/prisma";
+import { ingestMonitoringEvent } from "../monitoring/services/monitoring-event.service";
 import { env } from "../config/env";
 import { enqueueNotificationEvent, enqueueTransferJobs } from "./queues";
 import type {
@@ -64,6 +65,33 @@ export const publishPendingOutboxEvents = async (): Promise<void> => {
                 transactionId: payload.transactionId,
                 actorUserId: payload.actorUserId,
               } satisfies TransferCommittedPayload);
+            } else if (event.eventType === "MONITORING_EVENT_REQUESTED") {
+              const payload = event.payload as unknown as {
+                eventKey?: unknown; eventType?: unknown; transactionId?: unknown;
+                accountId?: unknown; userId?: unknown; correlationId?: unknown;
+                source?: unknown; occurredAt?: unknown; payload?: unknown;
+              };
+              if (
+                typeof payload.eventKey !== "string" ||
+                typeof payload.eventType !== "string" ||
+                typeof payload.transactionId !== "string" ||
+                typeof payload.accountId !== "string" ||
+                typeof payload.userId !== "string" ||
+                !payload.payload || typeof payload.payload !== "object" || Array.isArray(payload.payload)
+              ) {
+                throw new Error(`Invalid monitoring payload for outbox event ${event.id}`);
+              }
+              await ingestMonitoringEvent({
+                eventKey: payload.eventKey,
+                eventType: payload.eventType,
+                transactionId: payload.transactionId,
+                accountId: payload.accountId,
+                userId: payload.userId,
+                correlationId: event.id,
+                source: typeof payload.source === "string" ? payload.source : "outbox",
+                occurredAt: typeof payload.occurredAt === "string" ? payload.occurredAt : new Date(),
+                payload: payload.payload as Record<string, unknown>,
+              });
             } else if (event.eventType === "NOTIFICATION_REQUESTED") {
               const payload = event.payload as unknown as {
                 userId?: unknown;

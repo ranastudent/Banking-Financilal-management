@@ -6,6 +6,7 @@ import type { AuthUser } from "../../types/auth";
 import { prepareTransfer } from "../../transaction/services/transfer.service";
 import type { RiskReviewDecisionInput } from "../schemas/risk-review.schema";
 import { recordRiskReview } from "../../observability/metrics";
+import { createDecisionExplanationWithClient } from "../../monitoring/services/decision-explanation.service";
 
 export const listPendingRiskReviews = async (page: number, limit: number) => {
   const where = {
@@ -94,6 +95,24 @@ export const decideRiskReview = async (
       }
       await tx.transaction.update({ where: { id: risk.transactionId }, data: { status: "CANCELLED" } });
       await tx.riskAnalysis.update({ where: { id: riskAnalysisId }, data: { reviewStatus: "REJECTED" } });
+      const phase32Alert = await tx.fraudAlert.findFirst({
+        where: { transactionId: risk.transactionId, source: "PHASE32_RULE" },
+      });
+      if (phase32Alert && phase32Alert.status === "OPEN") {
+        await tx.fraudAlert.update({ where: { id: phase32Alert.id }, data: { status: "INVESTIGATING", acknowledgedAt: new Date() } });
+        await tx.fraudAlertAudit.create({
+          data: { fraudAlertId: phase32Alert.id, actorId: adminUserId, action: "STATUS_CHANGED", fromStatus: "OPEN", toStatus: "INVESTIGATING", comment: input.comment ?? "Transfer rejected after manual review." },
+        });
+      }
+      await createDecisionExplanationWithClient(tx, {
+        transactionId: risk.transactionId,
+        customerId: sourceAccount.userId,
+        phase: "PHASE32",
+        source: "MANUAL_REVIEW",
+        decision: "REJECTED",
+        riskAnalysisId,
+        ...(phase32Alert ? { fraudAlertId: phase32Alert.id } : {}),
+      });
       const review = await tx.riskReview.create({
         data: {
           riskAnalysisId,

@@ -1,0 +1,16 @@
+import { Router } from "express";
+import { authenticate } from "../../middleware/authenticate";
+import { authorize } from "../../middleware/authorize";
+import { listAlerts, updateAlert, createCase, listCases, addCaseNote, addCaseEvidence, assignCase, updateCase, dashboard } from "../controllers/fraud.controller";
+const router = Router();
+router.use(authenticate, authorize("ADMIN"));
+router.get("/alerts", listAlerts);
+router.patch("/alerts/:alertId", updateAlert);
+router.post("/alerts/:alertId/cases", createCase);
+router.get("/cases", listCases);
+router.post("/cases/:caseId/notes", addCaseNote);
+router.post("/cases/:caseId/evidence", addCaseEvidence);
+router.post("/cases/:caseId/assignments", assignCase);
+router.patch("/cases/:caseId", updateCase);
+router.get("/dashboard", dashboard);
+export default router;

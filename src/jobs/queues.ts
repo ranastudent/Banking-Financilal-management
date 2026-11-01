@@ -7,6 +7,7 @@ import type {
   NotificationEventPayload,
   ReportJobPayload,
   TransferCommittedPayload,
+  MonitoringEventJobPayload,
 } from "./types";
 
 export const BACKGROUND_QUEUE_NAME = "banking-background";
@@ -49,6 +50,7 @@ export const enqueueTransferJobs = async (
     { name: "send-notification", suffix: "send-notification" },
     { name: "process-audit-event", suffix: "process-audit-event" },
     { name: "risk-analysis", suffix: "risk-analysis" },
+    { name: "monitor-transaction", suffix: "monitor-transaction" },
   ];
 
   // Stable IDs make publishing the same outbox event idempotent while
@@ -60,6 +62,17 @@ export const enqueueTransferJobs = async (
       transferJobOptions(payload.outboxEventId, job.suffix),
     );
   }
+};
+
+
+export const enqueueMonitoringEvent = async (
+  payload: MonitoringEventJobPayload,
+): Promise<void> => {
+  await backgroundQueue.add(
+    "process-monitoring-event",
+    payload,
+    { jobId: `monitoring-event-${payload.monitoringEventId}` },
+  );
 };
 
 /** Enqueue one durable in-app notification job with a stable event-scoped ID. */
@@ -117,22 +130,18 @@ export const scheduleDailyReport = async (): Promise<void> => {
 };
 
 let queueClosed = false;
+
 export const closeBackgroundQueue = async (): Promise<void> => {
   if (queueClosed) return;
+
   queueClosed = true;
-  const errors: unknown[] = [];
+
   try {
+    // Let BullMQ manage the lifecycle of its Redis connection.
+    // Avoid manually quitting the same connection after queue.close().
     await backgroundQueue.close();
   } catch (error) {
-    errors.push(error);
-  }
-  try {
-    if (queueConnection.status !== "end") await queueConnection.quit();
-  } catch (error) {
-    errors.push(error);
-  }
-  if (errors.length) {
     queueClosed = false;
-    throw new AggregateError(errors, "Failed to close background queue resources");
+    throw error;
   }
 };

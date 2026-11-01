@@ -7,6 +7,7 @@ vi.mock("../../config/prisma", () => ({
 }));
 vi.mock("../../jobs/queues", () => ({
   enqueueEmailRecipientJobs: vi.fn(),
+  enqueueMonitoringEvent: vi.fn(),
 }));
 vi.mock("../../utils/mailer", () => ({ sendEmail: vi.fn() }));
 

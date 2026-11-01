@@ -211,7 +211,7 @@ describe("Fund Transfer - Transaction Record", () => {
       | "CUSTOMER"
       | "ADMIN"
       | "SUPPORT"
-      | "AUDITOR";
+      | "AUDITOR" | "RISK_ANALYST";
   }) => {
     return generateAccessToken({
       id: user.id,

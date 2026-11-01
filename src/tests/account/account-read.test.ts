@@ -12,7 +12,7 @@ const createdAuditLogIds: string[] = [];
 
 const createTestUser = async (
   name: string,
-  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR" = "CUSTOMER",
+  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR" | "RISK_ANALYST" = "CUSTOMER",
   status:
     | "ACTIVE"
     | "INACTIVE"
@@ -61,7 +61,7 @@ const createTestAccount = async (
 const createAccessToken = (user: {
   id: string;
   email: string;
-  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR";
+  role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR" | "RISK_ANALYST";
   status:
     | "ACTIVE"
     | "INACTIVE"

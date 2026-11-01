@@ -83,7 +83,7 @@ describe("Deposit Authorization", () => {
   const createAccessToken = (
     id: string,
     email: string,
-    role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR",
+    role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR" | "RISK_ANALYST",
   ) => {
     return generateAccessToken({
       id,
@@ -96,7 +96,7 @@ describe("Deposit Authorization", () => {
   const createUser = async (
     name: string,
     email: string,
-    role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR",
+    role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR" | "RISK_ANALYST",
   ) => {
     const user = await prisma.user.create({
       data: {

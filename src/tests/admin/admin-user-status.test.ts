@@ -57,7 +57,7 @@ describe("PATCH /api/v1/admin/users/:userId/status - Admin User Status", () => {
   });
 
   const createUser = async (
-    role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR" = "CUSTOMER",
+    role: "CUSTOMER" | "ADMIN" | "SUPPORT" | "AUDITOR" | "RISK_ANALYST" = "CUSTOMER",
     status: "ACTIVE" | "BLOCKED" | "SUSPENDED" = "ACTIVE",
   ) => {
     const email = createTestEmail("admin-status");
