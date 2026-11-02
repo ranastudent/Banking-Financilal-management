@@ -28,6 +28,7 @@ const { redisMock, values, sets } = vi.hoisted(() => {
       return members.size === before ? 0 : 1;
     }),
     sMembers: vi.fn(async (key: string) => [...(sets.get(key) ?? new Set<string>())]),
+    ttl: vi.fn(async () => -1),
     expire: vi.fn(async () => true),
   };
   return { redisMock, values, sets };
@@ -65,6 +66,7 @@ describe("Redis cache service", () => {
       return members.size === before ? 0 : 1;
     });
     redisMock.sMembers.mockImplementation(async (key: string) => [...(sets.get(key) ?? new Set<string>())]);
+    redisMock.ttl.mockResolvedValue(-1);
   });
 
   it("serializes and deserializes cached JSON values", async () => {
@@ -123,5 +125,22 @@ describe("Redis cache service", () => {
     await expect(cacheService.getOrSet("redis:closed", loader)).resolves.toEqual({ authoritative: true });
     expect(loader).toHaveBeenCalledTimes(1);
     expect(redisMock.get).not.toHaveBeenCalled();
+  });
+
+  it("does not shorten a cache-group index TTL when a shorter-lived entry is added", async () => {
+    redisMock.ttl.mockResolvedValue(300);
+
+    await cacheService.set("long-lived", { value: 1 }, 240, ["shared-group"]);
+    expect(redisMock.expire).not.toHaveBeenCalled();
+  });
+
+  it("extends a cache-group index TTL when a longer-lived entry is added", async () => {
+    redisMock.ttl.mockResolvedValue(60);
+
+    await cacheService.set("long-lived", { value: 1 }, 240, ["shared-group"]);
+    expect(redisMock.expire).toHaveBeenCalledWith(
+      "banking:cache:v1:group:shared-group",
+      240,
+    );
   });
 });

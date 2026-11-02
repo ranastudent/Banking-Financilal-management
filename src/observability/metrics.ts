@@ -25,6 +25,11 @@ let redisOperations = 0;
 let redisOperationErrors = 0;
 let redisOperationTotalMs = 0;
 let redisOperationMaxMs = 0;
+let cacheHits = 0;
+let cacheMisses = 0;
+let cacheWrites = 0;
+let cacheInvalidations = 0;
+let cacheErrors = 0;
 let riskAssessments = 0;
 let riskHolds = 0;
 let riskApprovals = 0;
@@ -98,6 +103,29 @@ export const recordRedisOperation = (durationMs: number, failed = false): void =
   redisOperationTotalMs += durationMs;
   redisOperationMaxMs = Math.max(redisOperationMaxMs, durationMs);
   if (failed) redisOperationErrors += 1;
+};
+
+
+export const recordCacheOperation = (
+  operation: "hit" | "miss" | "write" | "invalidate" | "error",
+): void => {
+  switch (operation) {
+    case "hit":
+      cacheHits += 1;
+      break;
+    case "miss":
+      cacheMisses += 1;
+      break;
+    case "write":
+      cacheWrites += 1;
+      break;
+    case "invalidate":
+      cacheInvalidations += 1;
+      break;
+    case "error":
+      cacheErrors += 1;
+      break;
+  }
 };
 
 export const recordTransferResult = (success: boolean): void => {
@@ -216,6 +244,26 @@ export const metricsHandler = (
     "# HELP banking_redis_operation_duration_ms_max Maximum measured Redis operation duration in milliseconds.",
     "# TYPE banking_redis_operation_duration_ms_max gauge",
     `banking_redis_operation_duration_ms_max ${redisOperationMaxMs}`,
+    "# HELP banking_cache_hits_total Redis cache hits.",
+    "# TYPE banking_cache_hits_total counter",
+    `banking_cache_hits_total ${cacheHits}`,
+    "# HELP banking_cache_misses_total Redis cache misses.",
+    "# TYPE banking_cache_misses_total counter",
+    `banking_cache_misses_total ${cacheMisses}`,
+    "# HELP banking_cache_writes_total Redis cache writes.",
+    "# TYPE banking_cache_writes_total counter",
+    `banking_cache_writes_total ${cacheWrites}`,
+    "# HELP banking_cache_invalidations_total Redis cache invalidations.",
+    "# TYPE banking_cache_invalidations_total counter",
+    `banking_cache_invalidations_total ${cacheInvalidations}`,
+    "# HELP banking_cache_errors_total Redis cache operation errors.",
+    "# TYPE banking_cache_errors_total counter",
+    `banking_cache_errors_total ${cacheErrors}`,
+    "# HELP banking_cache_hit_ratio Cache hits divided by cache hits plus misses.",
+    "# TYPE banking_cache_hit_ratio gauge",
+    `banking_cache_hit_ratio ${
+      cacheHits + cacheMisses > 0 ? cacheHits / (cacheHits + cacheMisses) : 0
+    }`,
     "# HELP banking_process_uptime_seconds Process uptime in seconds.",
     "# TYPE banking_process_uptime_seconds gauge",
     `banking_process_uptime_seconds ${process.uptime()}`,

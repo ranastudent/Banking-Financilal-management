@@ -1,4 +1,5 @@
 import express from "express";
+import compression from "compression";
 import { prisma } from "./config/prisma";
 import { pingRedis } from "./config/redis";
 import { requestIdMiddleware } from "./middleware/requestId";
@@ -21,6 +22,24 @@ const app = express();
 app.use(helmet());
 app.use(corsMiddleware);
 app.use(requestIdMiddleware);
+// Compress eligible responses above 1 KiB. Compression is transport-only and
+// does not alter JSON values, database writes, or financial calculations.
+app.use(compression({
+  threshold: 1024,
+  // Avoid compression side-channel exposure on authenticated or authentication
+  // responses. Public, non-sensitive responses remain eligible for compression.
+  filter: (req, res) => {
+    const path = req.path.toLowerCase();
+    if (
+      req.headers.authorization ||
+      req.headers.cookie ||
+      path.includes("/auth")
+    ) {
+      return false;
+    }
+    return compression.filter(req, res);
+  },
+}));
 app.use(requestLogger);
 app.use(express.json({ limit: env.bodySizeLimit }));
 app.use(generalRateLimiter);

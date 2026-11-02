@@ -1,4 +1,5 @@
 import { redis } from "../config/redis";
+import { recordCacheOperation } from "../observability/metrics";
 
 const CACHE_PREFIX = "banking:cache:v1:";
 const GROUP_PREFIX = `${CACHE_PREFIX}group:`;
@@ -20,6 +21,7 @@ export const cacheService = {
 
     try {
       const value = await redis.get(cacheKey(key));
+      recordCacheOperation(value === null ? "miss" : "hit");
       if (value === null) return null;
 
       try {
@@ -27,9 +29,11 @@ export const cacheService = {
       } catch {
         // Corrupt cache entries are discarded and treated as a miss.
         await redis.del(cacheKey(key)).catch(() => undefined);
+        recordCacheOperation("error");
         return null;
       }
     } catch (error) {
+      recordCacheOperation("error");
       console.warn("Cache read failed; falling back to source of truth.", error);
       return null;
     }
@@ -49,16 +53,23 @@ export const cacheService = {
 
     try {
       await redis.set(fullKey, JSON.stringify(value), { EX: ttlSeconds });
+      recordCacheOperation("write");
 
       // Group indexes make related entries invalidatable without KEYS/blocking scans.
       for (const group of new Set(groups)) {
         const indexKey = groupKey(group);
         await redis.sAdd(indexKey, fullKey);
-        // The index must outlive the longest cache entry that it tracks.
-        await redis.expire(indexKey, Math.max(ttlSeconds, 60));
+        // Never shorten a group index TTL: entries in the same group may have
+        // longer lifetimes than the most recently written entry.
+        const desiredTtl = Math.max(ttlSeconds, 60);
+        const currentTtl = await redis.ttl(indexKey);
+        if (currentTtl < desiredTtl) {
+          await redis.expire(indexKey, desiredTtl);
+        }
       }
     } catch (error) {
       // A failed cache write must never fail an otherwise valid read request.
+      recordCacheOperation("error");
       console.warn("Cache write failed; continuing without cache.", error);
     }
   },
@@ -68,7 +79,9 @@ export const cacheService = {
 
     try {
       await redis.del(cacheKey(key));
+      recordCacheOperation("invalidate");
     } catch (error) {
+      recordCacheOperation("error");
       console.warn("Cache deletion failed; entry will expire by TTL.", error);
     }
   },
@@ -84,7 +97,9 @@ export const cacheService = {
         await redis.del(keys);
       }
       await redis.del(indexKey);
+      recordCacheOperation("invalidate");
     } catch (error) {
+      recordCacheOperation("error");
       // Short TTLs bound stale data if Redis invalidation is temporarily unavailable.
       console.warn("Cache group invalidation failed; entries will expire by TTL.", error);
     }

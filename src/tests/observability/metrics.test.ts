@@ -6,6 +6,7 @@ import {
   metricsHandler,
   recordDatabaseError,
   recordDatabaseQuery,
+  recordCacheOperation,
   recordRedisOperation,
   recordQueueFailure,
   recordRequest,
@@ -152,5 +153,31 @@ describe("Observability metrics", () => {
     } as unknown as Request;
 
     expect(getMetricEndpoint(req)).toBe("/api/v1/accounts/:id");
+  });
+
+  it("records cache hits, misses, writes, invalidations, and errors", () => {
+    const before = readMetrics();
+    recordCacheOperation("hit");
+    recordCacheOperation("miss");
+    recordCacheOperation("write");
+    recordCacheOperation("invalidate");
+    recordCacheOperation("error");
+    const after = readMetrics();
+
+    expect(readCounter(after, "banking_cache_hits_total")).toBe(
+      readCounter(before, "banking_cache_hits_total") + 1,
+    );
+    expect(readCounter(after, "banking_cache_misses_total")).toBe(
+      readCounter(before, "banking_cache_misses_total") + 1,
+    );
+    expect(readCounter(after, "banking_cache_writes_total")).toBe(
+      readCounter(before, "banking_cache_writes_total") + 1,
+    );
+    expect(readCounter(after, "banking_cache_invalidations_total")).toBe(
+      readCounter(before, "banking_cache_invalidations_total") + 1,
+    );
+    expect(readCounter(after, "banking_cache_errors_total")).toBe(
+      readCounter(before, "banking_cache_errors_total") + 1,
+    );
   });
 });

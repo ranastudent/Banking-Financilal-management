@@ -4,6 +4,7 @@ import { RedisStore } from "rate-limit-redis";
 
 import { env } from "../config/env";
 import { ensureRedisConnected, redis } from "../config/redis";
+import { recordRedisOperation } from "../observability/metrics";
 
 const isTestEnvironment =
   process.env.NODE_ENV === "test" || process.env.VITEST === "true";
@@ -39,8 +40,21 @@ const rateLimitKeyGenerator = (req: Request): string => {
 
 const createRedisStore = (prefix: string) =>
   new RedisStore({
-    sendCommand: (...args: string[]) =>
-      ensureRedisConnected().then(() => redis.sendCommand(args)),
+    sendCommand: async (...args: string[]) => {
+      const startedAt = process.hrtime.bigint();
+      try {
+        await ensureRedisConnected();
+        const result = await redis.sendCommand(args);
+        recordRedisOperation(Number(process.hrtime.bigint() - startedAt) / 1_000_000);
+        return result as never ;
+      } catch (error) {
+        recordRedisOperation(
+          Number(process.hrtime.bigint() - startedAt) / 1_000_000,
+          true,
+        );
+        throw error;
+      }
+    },
     prefix,
   });
 
