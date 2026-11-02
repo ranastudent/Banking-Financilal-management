@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
-  findUnique: vi.fn(),
   update: vi.fn(),
   transaction: vi.fn(),
   queryRaw: vi.fn(),
@@ -15,7 +14,6 @@ vi.mock("../../config/prisma", () => ({
   prisma: {
     outboxEvent: {
       findMany: mocks.findMany,
-      findUnique: mocks.findUnique,
       update: mocks.update,
     },
     $transaction: mocks.transaction,
@@ -40,21 +38,23 @@ describe("outbox publisher reliability", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.findMany.mockResolvedValue([{ id: event.id }]);
-    mocks.queryRaw.mockResolvedValue([{ id: event.id }]);
-    mocks.findUnique.mockResolvedValue(event);
+    mocks.queryRaw.mockResolvedValue([event]);
     mocks.update.mockResolvedValue({ ...event, status: "PUBLISHED" });
     mocks.enqueueTransferJobs.mockResolvedValue(undefined);
     mocks.enqueueNotificationEvent.mockResolvedValue(undefined);
     mocks.transaction.mockImplementation(async (callback: any) =>
       callback({
         $queryRaw: mocks.queryRaw,
-        outboxEvent: { findUnique: mocks.findUnique, update: mocks.update },
+        outboxEvent: { update: mocks.update },
       }),
     );
   });
 
   it("publishes and marks the outbox event only after all jobs enqueue", async () => {
     await publishPendingOutboxEvents();
+    const lockQuery = mocks.queryRaw.mock.calls[0]?.[0] as TemplateStringsArray;
+    expect(Array.from(lockQuery).join(" ")).toContain('event_type AS "eventType"');
+    expect(Array.from(lockQuery).join(" ")).toContain("FOR UPDATE SKIP LOCKED");
     expect(mocks.enqueueTransferJobs).toHaveBeenCalledWith({
       outboxEventId: event.id,
       transactionId: "transaction-1",
@@ -93,8 +93,7 @@ describe("notification outbox events", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.findMany.mockResolvedValue([{ id: event.id }]);
-    mocks.queryRaw.mockResolvedValue([{ id: event.id }]);
-    mocks.findUnique.mockResolvedValue({
+    mocks.queryRaw.mockResolvedValue([{
       ...event,
       eventType: "NOTIFICATION_REQUESTED",
       payload: {
@@ -104,14 +103,14 @@ describe("notification outbox events", () => {
         message: "Your deposit was recorded.",
         metadata: { transactionId: "tx-42" },
       },
-    });
+    }]);
     mocks.update.mockResolvedValue({ ...event, status: "PUBLISHED" });
     mocks.enqueueTransferJobs.mockResolvedValue(undefined);
     mocks.enqueueNotificationEvent.mockResolvedValue(undefined);
     mocks.transaction.mockImplementation(async (callback: any) =>
       callback({
         $queryRaw: mocks.queryRaw,
-        outboxEvent: { findUnique: mocks.findUnique, update: mocks.update },
+        outboxEvent: { update: mocks.update },
       }),
     );
   });
@@ -133,11 +132,11 @@ describe("notification outbox events", () => {
   });
 
   it("leaves invalid notification events pending for retry/inspection", async () => {
-    mocks.findUnique.mockResolvedValueOnce({
+    mocks.queryRaw.mockResolvedValueOnce([{
       ...event,
       eventType: "NOTIFICATION_REQUESTED",
       payload: { userId: "user-42", notificationType: "UNKNOWN", title: "x", message: "y" },
-    });
+    }]);
     await publishPendingOutboxEvents();
     expect(mocks.enqueueNotificationEvent).not.toHaveBeenCalled();
     expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({

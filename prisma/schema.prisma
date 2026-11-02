@@ -190,6 +190,13 @@ model Transaction {
   @@index([status, createdAt])
   @@index([sourceAccountId, createdAt])
   @@index([destinationAccountId, createdAt])
+  // Supports account-scoped transaction history with deterministic cursor ordering.
+  @@index([sourceAccountId, createdAt(sort: Desc), id(sort: Desc)], map: "transactions_source_created_id_desc_idx")
+  @@index([destinationAccountId, createdAt(sort: Desc), id(sort: Desc)], map: "transactions_destination_created_id_desc_idx")
+  // Supports global cursor history ordered by createdAt DESC, id DESC.
+  @@index([createdAt(sort: Desc), id(sort: Desc)], map: "transactions_created_id_desc_idx")
+  // Supports the anomaly detector's source-account/currency/status/time-window lookup.
+  @@index([sourceAccountId, currencyCode, status, createdAt(sort: Desc)], map: "transactions_anomaly_history_idx")
   @@index([provider, providerTransactionId])
   @@index([currencyCode, createdAt])
   @@index([idempotencyKey])
@@ -792,6 +799,8 @@ model MonitoringEvent {
   decisionExplanations TransactionDecisionExplanation[]
 
   @@index([status, createdAt])
+  // Supports date-range event-health aggregation by createdAt.
+  @@index([createdAt], map: "monitoring_events_created_at_idx")
   @@index([eventType, occurredAt])
   @@index([accountId, occurredAt])
   @@index([userId, occurredAt])
@@ -918,6 +927,8 @@ model FraudPrediction {
   modelRegistry   FraudModelRegistry? @relation(fields: [modelRegistryId], references: [id], onDelete: SetNull)
 
   @@index([monitoringEventId, predictedAt])
+  // Supports dashboard COUNT(*) over a predictedAt time range.
+  @@index([predictedAt], map: "fraud_predictions_predicted_at_idx")
   @@index([transactionId])
   @@index([modelName, modelVersion, predictedAt])
   @@index([modelRegistryId])
@@ -954,6 +965,8 @@ model FraudAlert {
   decisionExplanations TransactionDecisionExplanation[]
 
   @@index([status, severity, createdAt])
+  // Supports date-range dashboard scans and recent-alert ordering without a status filter.
+  @@index([createdAt(sort: Desc)], map: "fraud_alerts_created_at_desc_idx")
   @@index([userId, createdAt])
   @@index([accountId, createdAt])
   @@index([transactionId])
@@ -986,6 +999,8 @@ model FraudCase {
   auditHistory    FraudCaseAudit[]
 
   @@index([status, priority, createdAt])
+  // Supports the recent-case listing ordered by createdAt DESC.
+  @@index([createdAt(sort: Desc)], map: "fraud_cases_created_at_desc_idx")
   @@index([assignedAnalystId, status])
   @@index([createdById, createdAt])
   @@map("fraud_cases")

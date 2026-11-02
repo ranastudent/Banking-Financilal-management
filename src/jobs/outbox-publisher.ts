@@ -30,19 +30,29 @@ export const publishPendingOutboxEvents = async (): Promise<void> => {
     for (const candidate of candidates) {
       try {
         await prisma.$transaction(async (tx) => {
-          const locked = await tx.$queryRaw<Array<{ id: string }>>`
-            SELECT id FROM outbox_events
-            WHERE id = ${candidate.id}::uuid AND status = 'PENDING'
+          // Fetch the event data as part of the locking read. This avoids a
+          // second round-trip (findUnique) after the row has been locked.
+          // Keep the status predicate in SQL so a concurrently published event
+          // cannot be processed again.
+          const locked = await tx.$queryRaw<
+            Array<{
+              id: string;
+              eventType: string;
+              payload: unknown;
+            }>
+          >`
+            SELECT
+              id,
+              event_type AS "eventType",
+              payload
+            FROM outbox_events
+            WHERE id = ${candidate.id}::uuid
+              AND status = 'PENDING'
             FOR UPDATE SKIP LOCKED
           `;
 
-          if (locked.length === 0) return;
-
-          const event = await tx.outboxEvent.findUnique({
-            where: { id: candidate.id },
-          });
-
-          if (!event || event.status !== "PENDING") return;
+          const event = locked[0];
+          if (!event) return;
 
           try {
             if (event.eventType === "TRANSFER_COMMITTED") {

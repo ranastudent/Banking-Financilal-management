@@ -5,6 +5,8 @@ import {
   getMetricEndpoint,
   metricsHandler,
   recordDatabaseError,
+  recordDatabaseQuery,
+  recordRedisOperation,
   recordQueueFailure,
   recordRequest,
   recordTransferResult,
@@ -47,6 +49,10 @@ describe("Observability metrics", () => {
     expect(metrics).toContain("banking_transfer_failure_total ");
     expect(metrics).toContain("banking_queue_failures_total ");
     expect(metrics).toContain("banking_database_errors_total ");
+    expect(metrics).toContain("banking_database_queries_total ");
+    expect(metrics).toContain("banking_database_slow_queries_total ");
+    expect(metrics).toContain("banking_redis_operations_total ");
+    expect(metrics).toContain("banking_process_resident_memory_bytes ");
   });
 
   it("increments HTTP request and 5xx error counters and records route labels", () => {
@@ -95,6 +101,38 @@ describe("Observability metrics", () => {
     expect(readCounter(after, "banking_database_errors_total")).toBe(
       readCounter(before, "banking_database_errors_total") + 1,
     );
+  });
+
+
+  it("records database query timings and slow-query counts", () => {
+    const before = readMetrics();
+    recordDatabaseQuery(25, false);
+    recordDatabaseQuery(175, true);
+    const after = readMetrics();
+
+    expect(readCounter(after, "banking_database_queries_total")).toBe(
+      readCounter(before, "banking_database_queries_total") + 2,
+    );
+    expect(readCounter(after, "banking_database_slow_queries_total")).toBe(
+      readCounter(before, "banking_database_slow_queries_total") + 1,
+    );
+    expect(after).toContain("banking_database_query_duration_ms_average ");
+    expect(after).toContain("banking_database_query_duration_ms_max ");
+  });
+
+  it("records Redis operation latency and failures", () => {
+    const before = readMetrics();
+    recordRedisOperation(4.5);
+    recordRedisOperation(12, true);
+    const after = readMetrics();
+
+    expect(readCounter(after, "banking_redis_operations_total")).toBe(
+      readCounter(before, "banking_redis_operations_total") + 2,
+    );
+    expect(readCounter(after, "banking_redis_operation_errors_total")).toBe(
+      readCounter(before, "banking_redis_operation_errors_total") + 1,
+    );
+    expect(after).toContain("banking_redis_operation_duration_ms_average ");
   });
 
   it("uses Express route templates to avoid recording resource IDs as labels", () => {

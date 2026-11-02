@@ -11,10 +11,20 @@ const requestMetrics = new Map<string, RequestMetric>();
 let totalRequests = 0;
 let totalErrors = 0;
 let totalLatencyMs = 0;
+let maxRequestLatencyMs = 0;
 let transferSuccesses = 0;
 let transferFailures = 0;
 let queueFailures = 0;
 let databaseErrors = 0;
+let databaseQueries = 0;
+let databaseQueryErrors = 0;
+let databaseSlowQueries = 0;
+let databaseQueryTotalMs = 0;
+let databaseQueryMaxMs = 0;
+let redisOperations = 0;
+let redisOperationErrors = 0;
+let redisOperationTotalMs = 0;
+let redisOperationMaxMs = 0;
 let riskAssessments = 0;
 let riskHolds = 0;
 let riskApprovals = 0;
@@ -69,6 +79,25 @@ export const recordRequest = (input: {
   totalRequests += 1;
   totalErrors += input.status >= 500 ? 1 : 0;
   totalLatencyMs += input.latencyMs;
+  maxRequestLatencyMs = Math.max(maxRequestLatencyMs, input.latencyMs);
+};
+
+
+/** Record Prisma query-event timing without retaining SQL or parameter values. */
+export const recordDatabaseQuery = (durationMs: number, slow: boolean): void => {
+  if (!Number.isFinite(durationMs) || durationMs < 0) return;
+  databaseQueries += 1;
+  databaseQueryTotalMs += durationMs;
+  databaseQueryMaxMs = Math.max(databaseQueryMaxMs, durationMs);
+  if (slow) databaseSlowQueries += 1;
+};
+
+export const recordRedisOperation = (durationMs: number, failed = false): void => {
+  if (!Number.isFinite(durationMs) || durationMs < 0) return;
+  redisOperations += 1;
+  redisOperationTotalMs += durationMs;
+  redisOperationMaxMs = Math.max(redisOperationMaxMs, durationMs);
+  if (failed) redisOperationErrors += 1;
 };
 
 export const recordTransferResult = (success: boolean): void => {
@@ -122,6 +151,10 @@ export const metricsHandler = (
       totalRequests ? totalLatencyMs / totalRequests : 0
     }`,
 
+    "# HELP banking_http_latency_ms_max Maximum observed HTTP request latency in milliseconds.",
+    "# TYPE banking_http_latency_ms_max gauge",
+    `banking_http_latency_ms_max ${maxRequestLatencyMs}`,
+
     "# HELP banking_transfer_success_total Successful fund transfers observed.",
     "# TYPE banking_transfer_success_total counter",
     `banking_transfer_success_total ${transferSuccesses}`,
@@ -158,6 +191,46 @@ export const metricsHandler = (
     "# HELP banking_database_errors_total Database-related errors observed.",
     "# TYPE banking_database_errors_total counter",
     `banking_database_errors_total ${databaseErrors}`,
+
+    "# HELP banking_database_queries_total Prisma query events observed.",
+    "# TYPE banking_database_queries_total counter",
+    `banking_database_queries_total ${databaseQueries}`,
+    "# HELP banking_database_slow_queries_total Prisma queries at or above the configured slow threshold.",
+    "# TYPE banking_database_slow_queries_total counter",
+    `banking_database_slow_queries_total ${databaseSlowQueries}`,
+    "# HELP banking_database_query_duration_ms_average Average observed Prisma query duration in milliseconds.",
+    "# TYPE banking_database_query_duration_ms_average gauge",
+    `banking_database_query_duration_ms_average ${databaseQueries ? databaseQueryTotalMs / databaseQueries : 0}`,
+    "# HELP banking_database_query_duration_ms_max Maximum observed Prisma query duration in milliseconds.",
+    "# TYPE banking_database_query_duration_ms_max gauge",
+    `banking_database_query_duration_ms_max ${databaseQueryMaxMs}`,
+    "# HELP banking_redis_operations_total Redis operations measured by application instrumentation.",
+    "# TYPE banking_redis_operations_total counter",
+    `banking_redis_operations_total ${redisOperations}`,
+    "# HELP banking_redis_operation_errors_total Failed Redis operations measured by application instrumentation.",
+    "# TYPE banking_redis_operation_errors_total counter",
+    `banking_redis_operation_errors_total ${redisOperationErrors}`,
+    "# HELP banking_redis_operation_duration_ms_average Average measured Redis operation duration in milliseconds.",
+    "# TYPE banking_redis_operation_duration_ms_average gauge",
+    `banking_redis_operation_duration_ms_average ${redisOperations ? redisOperationTotalMs / redisOperations : 0}`,
+    "# HELP banking_redis_operation_duration_ms_max Maximum measured Redis operation duration in milliseconds.",
+    "# TYPE banking_redis_operation_duration_ms_max gauge",
+    `banking_redis_operation_duration_ms_max ${redisOperationMaxMs}`,
+    "# HELP banking_process_uptime_seconds Process uptime in seconds.",
+    "# TYPE banking_process_uptime_seconds gauge",
+    `banking_process_uptime_seconds ${process.uptime()}`,
+    "# HELP banking_process_resident_memory_bytes Resident memory in bytes.",
+    "# TYPE banking_process_resident_memory_bytes gauge",
+    `banking_process_resident_memory_bytes ${process.memoryUsage().rss}`,
+    "# HELP banking_process_heap_used_bytes JavaScript heap used in bytes.",
+    "# TYPE banking_process_heap_used_bytes gauge",
+    `banking_process_heap_used_bytes ${process.memoryUsage().heapUsed}`,
+    "# HELP banking_process_cpu_user_seconds_total Process user CPU time in seconds.",
+    "# TYPE banking_process_cpu_user_seconds_total counter",
+    `banking_process_cpu_user_seconds_total ${process.cpuUsage().user / 1_000_000}`,
+    "# HELP banking_process_cpu_system_seconds_total Process system CPU time in seconds.",
+    "# TYPE banking_process_cpu_system_seconds_total counter",
+    `banking_process_cpu_system_seconds_total ${process.cpuUsage().system / 1_000_000}`,
 
     "# HELP banking_http_requests_by_route_total HTTP requests by method, endpoint template, and status.",
     "# TYPE banking_http_requests_by_route_total counter",

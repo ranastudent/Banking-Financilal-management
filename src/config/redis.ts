@@ -1,28 +1,32 @@
 import { createClient } from "redis";
 import { env } from "./env";
+import { logger } from "../observability/logger";
+import { recordRedisOperation } from "../observability/metrics";
 
 export const redis = createClient({
   url: env.redisUrl,
 });
 
 redis.on("connect", () => {
-  console.log("Redis connecting...");
+  logger.info("redis.connection.connecting");
 });
 
 redis.on("ready", () => {
-  console.log("Redis ready");
+  logger.info("redis.connection.ready");
 });
 
 redis.on("reconnecting", () => {
-  console.log("Redis reconnecting...");
+  logger.warn("redis.connection.reconnecting");
 });
 
 redis.on("end", () => {
-  console.log("Redis connection closed");
+  logger.warn("redis.connection.closed");
 });
 
 redis.on("error", (error) => {
-  console.error("Redis Client Error:", error);
+  logger.error("redis.connection.error", {
+    errorName: error.name,
+  });
 });
 
 /**
@@ -72,4 +76,22 @@ export const ensureRedisConnected = async (): Promise<void> => {
   });
 
   return connectionPromise;
+};
+
+
+/**
+ * Measure an explicitly selected Redis operation without logging its command
+ * arguments or values. Use this for health/diagnostic probes, not as a wrapper
+ * around financial decision paths.
+ */
+export const pingRedis = async (): Promise<string> => {
+  const startedAt = process.hrtime.bigint();
+  try {
+    const result = await redis.ping();
+    recordRedisOperation(Number(process.hrtime.bigint() - startedAt) / 1_000_000);
+    return result;
+  } catch (error) {
+    recordRedisOperation(Number(process.hrtime.bigint() - startedAt) / 1_000_000, true);
+    throw error;
+  }
 };

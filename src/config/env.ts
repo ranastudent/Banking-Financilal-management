@@ -306,6 +306,17 @@ export const env = {
     process.env.BODY_SIZE_LIMIT?.trim() || "1mb",
 
   // ==========================================
+  // OBSERVABILITY / PERFORMANCE
+  // ==========================================
+  observability: {
+    slowQueryThresholdMs: parsePositiveNumber(
+      process.env.SLOW_QUERY_THRESHOLD_MS,
+      100,
+      "SLOW_QUERY_THRESHOLD_MS",
+    ),
+  },
+
+  // ==========================================
   // RATE LIMITING
   // ==========================================
 

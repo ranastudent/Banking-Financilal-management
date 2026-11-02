@@ -1,6 +1,6 @@
 import express from "express";
 import { prisma } from "./config/prisma";
-import { redis } from "./config/redis";
+import { pingRedis } from "./config/redis";
 import { requestIdMiddleware } from "./middleware/requestId";
 import { errorHandler } from "./middleware/errorHandler";
 import { AppError } from "./errors/AppError";
@@ -53,7 +53,7 @@ app.get("/health", async (req, res) => {
   }
 
   try {
-    const result = await redis.ping();
+    const result = await pingRedis();
 
     if (result === "PONG") {
       redisStatus = "connected";
@@ -83,7 +83,7 @@ if (env.nodeEnv !== "production") {
 app.get("/ready", async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
-    await redis.ping();
+    await pingRedis();
 
     res.status(200).json({
       ready: true,
