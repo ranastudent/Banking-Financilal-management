@@ -1,7 +1,8 @@
 import { redis } from "../config/redis";
+import { env } from "../config/env";
 import { recordCacheOperation } from "../observability/metrics";
 
-const CACHE_PREFIX = "banking:cache:v1:";
+const CACHE_PREFIX = `${env.redisKeyPrefix}banking:cache:v1:`;
 const GROUP_PREFIX = `${CACHE_PREFIX}group:`;
 const DEFAULT_TTL_SECONDS = 30;
 

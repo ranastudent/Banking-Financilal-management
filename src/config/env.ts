@@ -243,6 +243,12 @@ export const env = {
   // ==========================================
 
   redisUrl,
+  // Empty by default so Production and local Redis keys remain unchanged.
+  // Shared Redis deployments can set a namespace such as "banking-render:".
+  redisKeyPrefix: process.env.REDIS_KEY_PREFIX?.trim() || "",
+  // BullMQ defaults to "bull". Keeping this default preserves the existing
+  // Production and local queue namespace unless an environment overrides it.
+  bullMqPrefix: process.env.BULLMQ_PREFIX?.trim() || "bull",
 
   test: {
     databaseName: nodeEnv === "test" ? process.env.TEST_DATABASE_NAME!.trim() : undefined,
@@ -379,6 +385,10 @@ export const env = {
   // ==========================================
 
   backgroundJobs: {
+    // Enabled by default to preserve existing behavior. Set false on the
+    // Render API when no Render worker is deployed.
+    enableOutboxPublisher:
+      process.env.ENABLE_OUTBOX_PUBLISHER?.trim().toLowerCase() !== "false",
     outboxPollIntervalMs: parsePositiveNumber(
       process.env.OUTBOX_POLL_INTERVAL_MS,
       1000,

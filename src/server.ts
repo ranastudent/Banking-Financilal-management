@@ -24,7 +24,13 @@ async function startServer() {
     // --------------------------------
     // Transfer events are persisted in PostgreSQL inside the transfer
     // transaction; this publisher forwards committed events to BullMQ.
-    startOutboxPublisher();
+    // It can be disabled on hosts where no matching background worker runs.
+    if (env.backgroundJobs.enableOutboxPublisher) {
+      startOutboxPublisher();
+      console.log("Outbox Publisher started");
+    } else {
+      console.log("Outbox Publisher disabled by configuration");
+    }
 
     // --------------------------------
     // Start HTTP server

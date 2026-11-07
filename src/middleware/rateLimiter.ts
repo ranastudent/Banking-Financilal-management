@@ -71,7 +71,7 @@ const generalRateLimiterImpl = rateLimit({
   windowMs: env.rateLimit.general.windowMs,
   limit: env.rateLimit.general.max,
   keyGenerator: rateLimitKeyGenerator,
-  store: createRedisStore("rl:general:"),
+  store: createRedisStore(`${env.redisKeyPrefix}rl:general:`),
   standardHeaders: "draft-7",
   legacyHeaders: false,
   handler: createRateLimitHandler(
@@ -84,7 +84,7 @@ const authRateLimiterImpl = rateLimit({
   windowMs: env.rateLimit.auth.windowMs,
   limit: env.rateLimit.auth.max,
   keyGenerator: rateLimitKeyGenerator,
-  store: createRedisStore("rl:auth:"),
+  store: createRedisStore(`${env.redisKeyPrefix}rl:auth:`),
   standardHeaders: "draft-7",
   legacyHeaders: false,
   handler: createRateLimitHandler(
@@ -97,7 +97,7 @@ const otpRateLimiterImpl = rateLimit({
   windowMs: env.rateLimit.otp.windowMs,
   limit: env.rateLimit.otp.max,
   keyGenerator: rateLimitKeyGenerator,
-  store: createRedisStore("rl:otp:"),
+  store: createRedisStore(`${env.redisKeyPrefix}rl:otp:`),
   standardHeaders: "draft-7",
   legacyHeaders: false,
   handler: createRateLimitHandler(
@@ -110,7 +110,7 @@ const transferRateLimiterImpl = rateLimit({
   windowMs: env.rateLimit.transfer.windowMs,
   limit: env.rateLimit.transfer.max,
   keyGenerator: rateLimitKeyGenerator,
-  store: createRedisStore("rl:transfer:"),
+  store: createRedisStore(`${env.redisKeyPrefix}rl:transfer:`),
   standardHeaders: "draft-7",
   legacyHeaders: false,
   handler: createRateLimitHandler(
@@ -123,7 +123,7 @@ const transactionHistoryRateLimiterImpl = rateLimit({
   windowMs: env.rateLimit.transactionHistory.windowMs,
   limit: env.rateLimit.transactionHistory.max,
   keyGenerator: rateLimitKeyGenerator,
-  store: createRedisStore("rl:transaction-history:"),
+  store: createRedisStore(`${env.redisKeyPrefix}rl:transaction-history:`),
   standardHeaders: "draft-7",
   legacyHeaders: false,
   handler: createRateLimitHandler(

@@ -20,6 +20,7 @@ export const backgroundQueue = new Queue<
   BackgroundJobName
 >(BACKGROUND_QUEUE_NAME, {
   connection: queueConnection,
+  prefix: env.bullMqPrefix,
   defaultJobOptions: {
     attempts: 5,
     backoff: {

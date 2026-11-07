@@ -111,7 +111,11 @@ const createWorker = (): Worker<BackgroundJobData, void, BackgroundJobName> => {
         jobName: job.name,
       });
     },
-    { connection: workerConnection, concurrency: 5 },
+    {
+      connection: workerConnection,
+      concurrency: 5,
+      prefix: env.bullMqPrefix,
+    },
   );
 };
 
@@ -228,7 +232,13 @@ const start = async (): Promise<void> => {
   // The API normally runs this publisher too. Starting it here provides a
   // recovery path when the free API host is asleep; PostgreSQL row locking
   // with SKIP LOCKED allows multiple publisher instances to cooperate.
-  startOutboxPublisher();
+  // Keep the same environment switch in both API and Worker processes.
+  if (env.backgroundJobs.enableOutboxPublisher) {
+    startOutboxPublisher();
+    logger.info("background.outbox_publisher.started");
+  } else {
+    logger.info("background.outbox_publisher.disabled_by_configuration");
+  }
 
   logger.info("background.worker.ready", {
     queue: BACKGROUND_QUEUE_NAME,
