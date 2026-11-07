@@ -70,6 +70,9 @@ const createRateLimitHandler = (code: string, message: string) =>
 const generalRateLimiterImpl = rateLimit({
   windowMs: env.rateLimit.general.windowMs,
   limit: env.rateLimit.general.max,
+  skip: (req) =>
+    req.path === "/health" ||
+    req.path === "/ready",
   keyGenerator: rateLimitKeyGenerator,
   store: createRedisStore(`${env.redisKeyPrefix}rl:general:`),
   standardHeaders: "draft-7",

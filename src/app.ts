@@ -59,36 +59,10 @@ if (env.nodeEnv !== "production") {
   app.use("/test-validation", validationTestRouter);
 }
 
-app.get("/health", async (req, res) => {
-  
-  let database = "disconnected";
-  let redisStatus = "disconnected";
 
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    database = "connected";
-  } catch {
-    database = "disconnected";
-  }
-
-  try {
-    const result = await pingRedis();
-
-    if (result === "PONG") {
-      redisStatus = "connected";
-    }
-  } catch {
-    redisStatus = "disconnected";
-  }
-
-  const healthy =
-    database === "connected" &&
-    redisStatus === "connected";
-
-  res.status(healthy ? 200 : 503).json({
-    status: healthy ? "ok" : "degraded",
-    database,
-    redis: redisStatus,
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "ok",
     requestId: req.requestId,
   });
 });
@@ -99,17 +73,19 @@ if (env.nodeEnv !== "production") {
   app.get("/metrics", metricsHandler);
 }
 
-app.get("/ready", async (_req, res) => {
+app.get("/ready", async (req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
     await pingRedis();
 
     res.status(200).json({
       ready: true,
+      requestId: req.requestId,
     });
   } catch {
     res.status(503).json({
       ready: false,
+      requestId: req.requestId,
     });
   }
 });
