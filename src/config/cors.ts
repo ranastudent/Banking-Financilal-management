@@ -24,6 +24,7 @@ const corsOptions: CorsOptions = {
     "Content-Type",
     "Authorization",
     "X-Request-ID",
+    "Idempotency-Key",
   ],
 
   credentials: true,

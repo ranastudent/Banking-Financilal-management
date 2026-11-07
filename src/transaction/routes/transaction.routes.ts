@@ -3,6 +3,8 @@ import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate";
 import { authorize } from "../../middleware/authorize";
 import { validate } from "../../middleware/validate";
+import { requireIdempotencyKey } from "../../middleware/idempotency.middleware";
+import { withdrawalSchema } from "../../account/schemas/withdrawal.schema";
 import {
   transferRateLimiter,
   transactionHistoryRateLimiter,
@@ -60,7 +62,8 @@ router.get(
 );
 
 // ============================================================
-// DEPOSIT
+// LEGACY DEPOSIT AUTHORIZATION (does not execute a deposit)
+// Use POST /api/v1/accounts/:accountId/deposits to execute a deposit.
 // ============================================================
 
 router.post(
@@ -71,18 +74,23 @@ router.post(
 );
 
 // ============================================================
-// WITHDRAWAL
+// LEGACY WITHDRAWAL EXECUTION
+// Kept for backward compatibility; now enforces schema validation and idempotency.
+// Prefer POST /api/v1/accounts/:accountId/withdrawals for new clients.
 // ============================================================
 
 router.post(
   "/withdrawal/:accountId",
   authenticate,
   authorize("CUSTOMER", "ADMIN"),
+  validate({ body: withdrawalSchema }),
+  requireIdempotencyKey,
   processWithdrawal,
 );
 
 // ============================================================
-// INTERNAL TRANSFER
+// LEGACY TRANSFER AUTHORIZATION (does not execute a transfer)
+// Use POST /api/v1/transfers to execute a fund transfer.
 // ============================================================
 
 router.post(
